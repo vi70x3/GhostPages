@@ -83,6 +83,13 @@ impl TransferScheduler {
                             job.chunk_id,
                             pressure.max_pressure()
                         );
+                        self.trace_log.record(TraceEvent::PolicyDecision {
+                            chunk_id: job.chunk_id,
+                            from: job.from_tier,
+                            to: job.to_tier,
+                            reason: format!("pressure {:.2}", pressure.max_pressure()),
+                            timestamp: current_timestamp(),
+                        });
                         continue;
                     }
 
@@ -195,6 +202,21 @@ impl TransferScheduler {
         // Update job state
         job.transition_state(TransferState::Queued);
 
+        // Emit policy decision: dispatched
+        self.trace_log.record(TraceEvent::PolicyDecision {
+            chunk_id: job.chunk_id,
+            from: job.from_tier,
+            to: job.to_tier,
+            reason: format!("from={:?} to={:?}", job.from_tier, job.to_tier),
+            timestamp: current_timestamp(),
+        });
+
+        // Emit transfer started event on dispatch
+        self.trace_log.record(TraceEvent::TransferStarted {
+            job: job.clone(),
+            timestamp: current_timestamp(),
+        });
+
         // Send to worker
         worker_tx
             .try_send(job)
@@ -224,7 +246,7 @@ mod tests {
     use ghost_policy::{LruConfig, LruPolicy, PlacementPolicy};
 
     fn test_scheduler() -> TransferScheduler {
-        let queue = Arc::new(TransferQueue::new(100));
+        let queue = Arc::new(TransferQueue::new(100, Arc::new(TraceLog::new(1000))));
         let policy: Arc<dyn PlacementPolicy> = Arc::new(LruPolicy::new(LruConfig::default()));
         let state_machine = Arc::new(std::sync::Mutex::new(StateMachine::new()));
         let trace_log = Arc::new(TraceLog::new(1000));

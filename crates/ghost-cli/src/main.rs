@@ -360,6 +360,9 @@ fn print_trace_event(event: &TraceEvent) {
                 ts, event_type, chunk, tier, reason
             );
         }
+        _ => {
+            println!("  [{}] {} {:?}", ts, event_type, event);
+        }
     }
 }
 

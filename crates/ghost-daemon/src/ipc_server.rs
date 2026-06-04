@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ghost_core::error::{GhostError, GhostResult};
+use ghost_core::trace::{current_timestamp, TraceEvent};
 use ghost_core::types::{ChunkId, ChunkMeta, TierId};
 
 use tokio::net::{UnixListener, UnixStream};
@@ -132,10 +133,15 @@ impl IpcServer {
                             let mut conn_shutdown = self.shutdown.clone();
 
                             tokio::spawn(async move {
+                                // Emit IpcConnectionAccepted event
+                                trace_log.record(TraceEvent::IpcConnectionAccepted {
+                                    timestamp: current_timestamp(),
+                                });
+
                                 if let Err(e) = handle_connection(
                                     stream,
                                     orchestrator,
-                                    trace_log,
+                                    trace_log.clone(),
                                     timeout,
                                     max_size,
                                     start_time,
@@ -143,6 +149,11 @@ impl IpcServer {
                                 ).await {
                                     tracing::debug!("connection handler error: {}", e);
                                 }
+
+                                // Emit IpcConnectionClosed event
+                                trace_log.record(TraceEvent::IpcConnectionClosed {
+                                    timestamp: current_timestamp(),
+                                });
                             });
                         }
                         Err(e) => {
@@ -234,6 +245,26 @@ async fn handle_connection(
             }
         };
 
+        // Emit IpcRequestReceived event
+        let request_type = match &request {
+            IpcRequest::Store { .. } => "store",
+            IpcRequest::Retrieve { .. } => "retrieve",
+            IpcRequest::Delete { .. } => "delete",
+            IpcRequest::Migrate { .. } => "migrate",
+            IpcRequest::Info { .. } => "info",
+            IpcRequest::List { .. } => "list",
+            IpcRequest::Status => "status",
+            IpcRequest::Pressure => "pressure",
+            IpcRequest::Trace { .. } => "trace",
+            IpcRequest::PressureCheck => "pressure_check",
+            IpcRequest::Shutdown => "shutdown",
+            IpcRequest::Ping => "ping",
+        };
+        trace_log.record(TraceEvent::IpcRequestReceived {
+            request_type: request_type.to_string(),
+            timestamp: current_timestamp(),
+        });
+
         // Dispatch request
         let response = dispatch_request(
             &request,
@@ -242,6 +273,25 @@ async fn handle_connection(
             start_time,
         )
         .await;
+
+        // Emit IpcResponseSent event
+        let response_type = match &response {
+            IpcResponse::Ok { .. } => "ok",
+            IpcResponse::ChunkId { .. } => "chunk_id",
+            IpcResponse::Error { .. } => "error",
+            IpcResponse::Info { .. } => "info",
+            IpcResponse::List { .. } => "list",
+            IpcResponse::Status { .. } => "status",
+            IpcResponse::Pressure { .. } => "pressure",
+            IpcResponse::Trace { .. } => "trace",
+            IpcResponse::PressureCheck { .. } => "pressure_check",
+            IpcResponse::Pong => "pong",
+        };
+        trace_log.record(TraceEvent::IpcResponseSent {
+            request_type: request_type.to_string(),
+            success: matches!(&response, IpcResponse::Ok { .. } | IpcResponse::ChunkId { .. } | IpcResponse::Info { .. } | IpcResponse::List { .. } | IpcResponse::Status { .. } | IpcResponse::Pressure { .. } | IpcResponse::Trace { .. } | IpcResponse::PressureCheck { .. } | IpcResponse::Pong),
+            timestamp: current_timestamp(),
+        });
 
         // Send response
         if let Err(e) = send_response(&mut stream, &response).await {

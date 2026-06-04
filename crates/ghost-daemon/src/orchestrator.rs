@@ -52,10 +52,18 @@ impl TransferOrchestrator {
         backends: HashMap<TierId, Arc<dyn StorageBackend>>,
         policy: Arc<dyn PlacementPolicy>,
     ) -> Self {
-        let queue = Arc::new(TransferQueue::new(config.queue_capacity));
-        let state_machine = Arc::new(std::sync::Mutex::new(StateMachine::new()));
         let trace_log = Arc::new(TraceLog::new(config.trace_max_events));
+        let queue = Arc::new(TransferQueue::new(config.queue_capacity, trace_log.clone()));
+        let state_machine = Arc::new(std::sync::Mutex::new(StateMachine::new()));
         let metrics = Arc::new(TransferMetrics::new());
+
+        // Emit BackendRegistered events for each backend
+        for tier_id in backends.keys() {
+            trace_log.record(TraceEvent::BackendRegistered {
+                tier: *tier_id,
+                timestamp: current_timestamp(),
+            });
+        }
 
         let scheduler_config = SchedulerConfig {
             max_concurrent_transfers: config.worker_count,
@@ -105,6 +113,11 @@ impl TransferOrchestrator {
     pub fn start(&mut self) -> GhostResult<()> {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         self.shutdown_tx = Some(shutdown_tx.clone());
+
+        // Emit DaemonStarted event
+        self.trace_log.record(TraceEvent::DaemonStarted {
+            timestamp: current_timestamp(),
+        });
 
         // Create and start the worker pool
         let worker_pool = WorkerPool::new(
@@ -363,6 +376,14 @@ impl TransferOrchestrator {
             timestamp: current_timestamp(),
         });
 
+        // Emit Eviction event
+        self.trace_log.record(TraceEvent::Eviction {
+            chunk_id,
+            tier,
+            reason: ghost_core::trace::EvictionReason::Manual,
+            timestamp: current_timestamp(),
+        });
+
         tracing::info!("Evicted chunk {:?} from tier {:?}", chunk_id, tier);
         Ok(())
     }
@@ -484,7 +505,24 @@ impl TransferOrchestrator {
                 if let Some(target_tier) =
                     self.policy.should_migrate(&meta, TierId::Ram, pressure)
                 {
+                    // Emit PolicyDecision event
+                    self.trace_log.record(TraceEvent::PolicyDecision {
+                        chunk_id,
+                        from: TierId::Ram,
+                        to: target_tier,
+                        reason: "memory_pressure".to_string(),
+                        timestamp: current_timestamp(),
+                    });
                     candidates.push((chunk_id, TierId::Ram, target_tier));
+                } else {
+                    // Emit PolicyDecision event for "no_migration" decision
+                    self.trace_log.record(TraceEvent::PolicyDecision {
+                        chunk_id,
+                        from: TierId::Ram,
+                        to: TierId::Ram,
+                        reason: "policy_rejected".to_string(),
+                        timestamp: current_timestamp(),
+                    });
                 }
             }
         }
@@ -498,6 +536,11 @@ impl TransferOrchestrator {
     /// (up to the configured timeout), then shuts down workers and scheduler.
     pub fn shutdown(&mut self) -> GhostResult<()> {
         tracing::info!("Orchestrator shutting down...");
+
+        // Emit DaemonStopping event
+        self.trace_log.record(TraceEvent::DaemonStopping {
+            timestamp: current_timestamp(),
+        });
 
         // Signal the queue to stop accepting new submissions
         self.queue.shutdown();
@@ -681,6 +724,10 @@ mod tests {
         let sm = orch.state_machine.lock().unwrap();
         let state = sm.get_state(&chunk_id);
         assert!(matches!(state, Some(ChunkState::Evicted)));
+
+        // Check that Eviction trace event was emitted
+        let events = orch.trace_log().get_events();
+        assert!(events.iter().any(|e| matches!(e, TraceEvent::Eviction { .. })));
     }
 
     #[test]
@@ -706,6 +753,10 @@ mod tests {
         // Shutdown without start should still work
         let result = orch.shutdown();
         assert!(result.is_ok());
+
+        // Check that DaemonStopping event was emitted
+        let events = orch.trace_log().get_events();
+        assert!(events.iter().any(|e| matches!(e, TraceEvent::DaemonStopping { .. })));
     }
 
     #[test]
@@ -740,5 +791,14 @@ mod tests {
         let sm = orch.state_machine.lock().unwrap();
         let state = sm.get_state(&chunk_id);
         assert!(matches!(state, Some(ChunkState::Stored)));
+    }
+
+    #[test]
+    fn test_orchestrator_backend_registered_events() {
+        let orch = test_orchestrator();
+        let events = orch.trace_log().get_events();
+        // Should have BackendRegistered events for Ram and Simulation
+        assert!(events.iter().any(|e| matches!(e, TraceEvent::BackendRegistered { tier: TierId::Ram, .. })));
+        assert!(events.iter().any(|e| matches!(e, TraceEvent::BackendRegistered { tier: TierId::Simulation, .. })));
     }
 }

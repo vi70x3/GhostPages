@@ -7,11 +7,14 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use ghost_core::error::{GhostError, GhostResult};
+use ghost_core::trace::{current_timestamp, TraceEvent};
 use ghost_core::transfer::{TransferJob, TransferPriority};
 use ghost_core::types::ChunkId;
 
 use parking_lot::Mutex;
 use tokio::sync::Notify;
+
+use crate::trace_log::TraceLog;
 
 /// A bounded, async transfer queue.
 ///
@@ -22,6 +25,7 @@ pub struct TransferQueue {
     inner: Arc<Mutex<TransferQueueInner>>,
     capacity: usize,
     notify: Arc<Notify>,
+    trace_log: Arc<TraceLog>,
 }
 
 #[derive(Debug)]
@@ -33,7 +37,7 @@ struct TransferQueueInner {
 
 impl TransferQueue {
     /// Create a new transfer queue with the given capacity.
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize, trace_log: Arc<TraceLog>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(TransferQueueInner {
                 jobs: VecDeque::with_capacity(capacity.min(1024)),
@@ -42,6 +46,7 @@ impl TransferQueue {
             })),
             capacity,
             notify: Arc::new(Notify::new()),
+            trace_log,
         }
     }
 
@@ -67,12 +72,26 @@ impl TransferQueue {
             return Err(GhostError::Cancelled);
         }
         if inner.current_depth >= self.capacity {
+            // Log backpressure event
+            self.trace_log.record(TraceEvent::TransferQueued {
+                chunk_id: job.chunk_id,
+                from: job.from_tier,
+                to: job.to_tier,
+                priority: job.priority,
+                timestamp: current_timestamp(),
+            });
             return Err(GhostError::Internal(format!(
                 "transfer queue is full (capacity: {})",
                 self.capacity
             )));
         }
         inner.current_depth += 1;
+
+        // Capture fields before moving job
+        let chunk_id = job.chunk_id;
+        let from_tier = job.from_tier;
+        let to_tier = job.to_tier;
+        let priority = job.priority;
 
         // Insert high-priority jobs at the front, low-priority at the back
         if job.priority.is_higher_than(TransferPriority::Normal) {
@@ -85,6 +104,25 @@ impl TransferQueue {
             inner.jobs.insert(pos, job);
         } else {
             inner.jobs.push_back(job);
+        }
+
+        // Log transfer queued event
+        self.trace_log.record(TraceEvent::TransferQueued {
+            chunk_id,
+            from: from_tier,
+            to: to_tier,
+            priority,
+            timestamp: current_timestamp(),
+        });
+
+        // Log warning if depth exceeds 75% capacity
+        let threshold = self.capacity * 3 / 4;
+        if inner.current_depth > threshold && inner.current_depth > 1 {
+            tracing::info!(
+                "Queue depth {} exceeds 75% of capacity {}",
+                inner.current_depth,
+                self.capacity
+            );
         }
 
         drop(inner);
@@ -163,7 +201,8 @@ impl TransferQueue {
 
 impl Default for TransferQueue {
     fn default() -> Self {
-        Self::new(1024)
+        let trace_log = Arc::new(TraceLog::new(1000));
+        Self::new(1024, trace_log)
     }
 }
 
@@ -173,6 +212,10 @@ impl Default for TransferQueue {
 mod tests {
     use super::*;
     use ghost_core::types::TierId;
+
+    fn test_trace_log() -> Arc<TraceLog> {
+        Arc::new(TraceLog::new(1000))
+    }
 
     fn make_job(id: &[u8], priority: TransferPriority) -> TransferJob {
         TransferJob::new(
@@ -186,7 +229,7 @@ mod tests {
 
     #[test]
     fn test_queue_new() {
-        let q = TransferQueue::new(10);
+        let q = TransferQueue::new(10, test_trace_log());
         assert_eq!(q.capacity(), 10);
         assert_eq!(q.depth(), 0);
         assert!(q.is_empty());
@@ -201,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_submit_and_dequeue() {
-        let q = TransferQueue::new(10);
+        let q = TransferQueue::new(10, test_trace_log());
         let job = make_job(b"test", TransferPriority::Normal);
         q.submit(job).unwrap();
         assert_eq!(q.depth(), 1);
@@ -215,7 +258,7 @@ mod tests {
 
     #[test]
     fn test_backpressure_full_queue() {
-        let q = TransferQueue::new(2);
+        let q = TransferQueue::new(2, test_trace_log());
         q.submit(make_job(b"a", TransferPriority::Normal)).unwrap();
         q.submit(make_job(b"b", TransferPriority::Normal)).unwrap();
         assert!(q.is_full());
@@ -231,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_priority_insertion() {
-        let q = TransferQueue::new(10);
+        let q = TransferQueue::new(10, test_trace_log());
 
         // Submit in order: Normal, Low, Critical, High
         q.submit(make_job(b"normal1", TransferPriority::Normal))
@@ -259,7 +302,7 @@ mod tests {
 
     #[test]
     fn test_submit_priority_method() {
-        let q = TransferQueue::new(10);
+        let q = TransferQueue::new(10, test_trace_log());
 
         // Use submit_priority for all
         q.submit_priority(make_job(b"normal", TransferPriority::Normal))
@@ -289,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_shutdown_rejects_submissions() {
-        let q = TransferQueue::new(10);
+        let q = TransferQueue::new(10, test_trace_log());
         q.shutdown();
         assert!(q.is_shutdown());
 
@@ -303,7 +346,7 @@ mod tests {
 
     #[test]
     fn test_shutdown_priority_rejects() {
-        let q = TransferQueue::new(10);
+        let q = TransferQueue::new(10, test_trace_log());
         q.shutdown();
 
         let result = q.submit_priority(make_job(b"test", TransferPriority::Critical));
@@ -312,13 +355,13 @@ mod tests {
 
     #[test]
     fn test_try_dequeue_empty() {
-        let q = TransferQueue::new(10);
+        let q = TransferQueue::new(10, test_trace_log());
         assert!(q.try_dequeue().is_none());
     }
 
     #[tokio::test]
     async fn test_dequeue_wait_returns_job() {
-        let q = Arc::new(TransferQueue::new(10));
+        let q = Arc::new(TransferQueue::new(10, test_trace_log()));
         let q2 = q.clone();
 
         // Spawn a task that waits for a job
@@ -341,7 +384,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_dequeue_wait_shutdown() {
-        let q = Arc::new(TransferQueue::new(10));
+        let q = Arc::new(TransferQueue::new(10, test_trace_log()));
         let q2 = q.clone();
 
         let handle = tokio::spawn(async move {
@@ -357,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_multiple_priority_levels() {
-        let q = TransferQueue::new(10);
+        let q = TransferQueue::new(10, test_trace_log());
 
         // Submit multiple of each priority
         for i in 0..3 {
@@ -390,5 +433,16 @@ mod tests {
         assert_eq!(j6.chunk_id, ChunkId::from_data(b"low1"));
 
         assert!(q.is_empty());
+    }
+
+    #[test]
+    fn test_queue_emits_transfer_queued_trace() {
+        let trace_log = test_trace_log();
+        let q = TransferQueue::new(10, trace_log.clone());
+        let job = make_job(b"trace_test", TransferPriority::Normal);
+        q.submit(job).unwrap();
+
+        let events = trace_log.get_events();
+        assert!(events.iter().any(|e| matches!(e, TraceEvent::TransferQueued { .. })));
     }
 }

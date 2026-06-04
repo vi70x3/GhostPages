@@ -78,6 +78,12 @@ impl WorkerPool {
             let rx = rx.clone();
 
             let handle = tokio::spawn(async move {
+                // Emit worker spawned event
+                trace_log.record(TraceEvent::WorkerSpawned {
+                    worker_id,
+                    timestamp: current_timestamp(),
+                });
+
                 loop {
                     // Check for shutdown signal first
                     if *shutdown_rx.borrow() {
@@ -109,9 +115,10 @@ impl WorkerPool {
                                 }
                                 Err(GhostError::Cancelled) => {
                                     metrics.record_cancellation();
-                                    trace_log.record(TraceEvent::TransferFailed {
+                                    trace_log.record(TraceEvent::TransferCancelled {
                                         chunk_id: job.chunk_id,
-                                        error: "cancelled".to_string(),
+                                        from: job.from_tier,
+                                        to: job.to_tier,
                                         timestamp: current_timestamp(),
                                     });
                                 }
@@ -119,7 +126,10 @@ impl WorkerPool {
                                     metrics.record_failure();
                                     trace_log.record(TraceEvent::TransferFailed {
                                         chunk_id: job.chunk_id,
+                                        from: job.from_tier,
+                                        to: job.to_tier,
                                         error: e.to_string(),
+                                        attempt: job.attempts,
                                         timestamp: current_timestamp(),
                                     });
                                 }
@@ -144,6 +154,12 @@ impl WorkerPool {
                         }
                     }
                 }
+
+                // Emit worker stopped event
+                trace_log.record(TraceEvent::WorkerStopped {
+                    worker_id,
+                    timestamp: current_timestamp(),
+                });
             });
 
             handles.push(handle);
@@ -176,6 +192,14 @@ impl WorkerPool {
         for attempt in 0..=max_retries {
             if attempt > 0 {
                 job.record_attempt();
+                // Emit transfer retry event
+                trace_log.record(TraceEvent::TransferRetry {
+                    chunk_id: job.chunk_id,
+                    from: job.from_tier,
+                    to: job.to_tier,
+                    attempt,
+                    timestamp: current_timestamp(),
+                });
                 // Exponential backoff
                 let delay = retry_base_delay_ms * (1u64 << (attempt - 1));
                 let delay = delay.min(max_retry_delay_ms);
@@ -206,9 +230,22 @@ impl WorkerPool {
             // Step 2: Optionally compress
             let (payload, _compressed_size) = if should_compress {
                 job.transition_state(TransferState::Compressing);
+                trace_log.record(TraceEvent::CompressionStarted {
+                    chunk_id: job.chunk_id,
+                    original_size: job.size,
+                    timestamp: current_timestamp(),
+                });
                 // For Phase 1c, we skip actual compression to keep the pipeline simple.
                 // The compression engine is available but we pass through.
-                (data, job.size)
+                let compressed = data; // pass-through
+                let compressed_size = job.size;
+                trace_log.record(TraceEvent::CompressionCompleted {
+                    chunk_id: job.chunk_id,
+                    original_size: job.size,
+                    compressed_size,
+                    timestamp: current_timestamp(),
+                });
+                (compressed, compressed_size)
             } else {
                 (data, job.size)
             };
@@ -237,6 +274,7 @@ impl WorkerPool {
                 chunk_id: job.chunk_id,
                 from: job.from_tier,
                 to: job.to_tier,
+                size: job.size,
                 duration_ms: elapsed_ms,
                 timestamp: current_timestamp(),
             });
@@ -381,6 +419,7 @@ mod tests {
         assert!(!events.is_empty());
         assert!(events.iter().any(|e| matches!(e, TraceEvent::TransferStarted { .. })));
         assert!(events.iter().any(|e| matches!(e, TraceEvent::TransferCompleted { .. })));
+        assert!(events.iter().any(|e| matches!(e, TraceEvent::WorkerSpawned { .. })));
 
         // Shutdown
         shutdown_tx.send(true).unwrap();

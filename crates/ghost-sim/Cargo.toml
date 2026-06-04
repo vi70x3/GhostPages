@@ -14,9 +14,14 @@ ghost-tier = { path = "../ghost-tier" }
 ghost-metrics = { path = "../ghost-metrics" }
 async-trait.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["time", "rt"] }
 tracing.workspace = true
 rand.workspace = true
+rand_chacha = "0.3"
+blake3.workspace = true
+bytes.workspace = true
+parking_lot.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

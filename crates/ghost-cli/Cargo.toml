@@ -1,0 +1,20 @@
+[package]
+name = "ghost-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI tools for interacting with GhostPages daemon"
+
+[dependencies]
+ghost-core = { path = "../ghost-core" }
+ghost-ipc = { path = "../ghost-ipc" }
+tokio.workspace = true
+tracing.workspace = true
+clap = { version = "4", features = ["derive"] }
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

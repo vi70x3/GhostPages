@@ -1,0 +1,22 @@
+[package]
+name = "ghost-sim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Simulation backend for GhostPages development and testing"
+
+[dependencies]
+ghost-core = { path = "../ghost-core" }
+ghost-tier = { path = "../ghost-tier" }
+ghost-metrics = { path = "../ghost-metrics" }
+async-trait.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

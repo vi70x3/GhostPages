@@ -1,0 +1,22 @@
+[package]
+name = "ghost-ipc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "IPC communication layer for GhostPages daemon"
+
+[dependencies]
+ghost-core = { path = "../ghost-core" }
+ghost-metrics = { path = "../ghost-metrics" }
+bincode.workspace = true
+bytes.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

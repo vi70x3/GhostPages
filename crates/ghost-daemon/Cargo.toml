@@ -1,0 +1,24 @@
+[package]
+name = "ghost-daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Main daemon process for GhostPages"
+
+[dependencies]
+ghost-core = { path = "../ghost-core" }
+ghost-tier = { path = "../ghost-tier" }
+ghost-policy = { path = "../ghost-policy" }
+ghost-compress = { path = "../ghost-compress" }
+ghost-metrics = { path = "../ghost-metrics" }
+ghost-ipc = { path = "../ghost-ipc" }
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

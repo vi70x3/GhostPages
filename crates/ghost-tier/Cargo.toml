@@ -1,0 +1,22 @@
+[package]
+name = "ghost-tier"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Storage backend trait and tier implementations for GhostPages"
+
+[dependencies]
+ghost-core = { path = "../ghost-core" }
+blake3.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+bytes.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

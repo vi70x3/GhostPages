@@ -1,0 +1,21 @@
+[package]
+name = "ghostpages-fuzz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ghost-core = { path = "../crates/ghost-core" }
+ghost-compress = { path = "../crates/ghost-compress" }
+libfuzzer-sys.workspace = true
+
+[[bin]]
+name = "chunk_roundtrip"
+path = "fuzz_targets/chunk_roundtrip.rs"
+
+[[bin]]
+name = "chunk_idempotent"
+path = "fuzz_targets/chunk_idempotent.rs"
+
+[[bin]]
+name = "compression_roundtrip"
+path = "fuzz_targets/compression_roundtrip.rs"

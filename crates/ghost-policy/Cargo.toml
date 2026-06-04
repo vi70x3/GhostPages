@@ -1,0 +1,20 @@
+[package]
+name = "ghost-policy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Placement policy trait and implementations for GhostPages"
+
+[dependencies]
+ghost-core = { path = "../ghost-core" }
+ghost-tier = { path = "../ghost-tier" }
+async-trait.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

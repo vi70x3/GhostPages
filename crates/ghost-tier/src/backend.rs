@@ -5,6 +5,7 @@
 //! Simulation) implements this trait.
 
 use async_trait::async_trait;
+use ghost_core::state::PressureState;
 use ghost_core::types::TierId;
 use std::fmt;
 
@@ -153,6 +154,13 @@ pub trait StorageBackend: Send + Sync + 'static {
 
     /// Check if the backend is healthy and operational.
     async fn health_check(&self) -> Result<(), BackendError>;
+
+    /// Return the current pressure state of this backend.
+    ///
+    /// Pressure is a live signal reflecting resource contention. Higher values
+    /// indicate more pressure (0.0 = idle, 1.0 = saturated). Implementations
+    /// should return a [`PressureState`] with relevant fields populated.
+    fn pressure(&self) -> PressureState;
 }
 
 impl fmt::Debug for dyn StorageBackend {

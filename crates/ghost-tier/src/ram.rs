@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use ghost_core::state::PressureState;
 use ghost_core::types::TierId;
 
 use std::collections::HashMap;
@@ -190,6 +191,23 @@ impl StorageBackend for RamBackend {
     async fn health_check(&self) -> Result<(), BackendError> {
         // RAM backend is always healthy
         Ok(())
+    }
+
+    fn pressure(&self) -> PressureState {
+        let used = self.used.lock();
+        let memory_pressure = if self.capacity > 0 {
+            (*used as f32) / (self.capacity as f32)
+        } else {
+            0.0
+        };
+
+        PressureState {
+            memory_pressure,
+            vram_pressure: 0.0,
+            io_pressure: 0.0,
+            queue_depth: 0,
+            throughput_bps: 0,
+        }
     }
 }
 

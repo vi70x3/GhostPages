@@ -31,6 +31,21 @@ pub struct OrchestratorConfig {
 
     /// Timeout in seconds for graceful shutdown.
     pub shutdown_timeout_secs: u64,
+
+    /// Interval in milliseconds between pressure samples from backends.
+    pub pressure_sample_interval_ms: u64,
+
+    /// EMA smoothing factor for pressure readings (0.0-1.0, lower = smoother).
+    pub pressure_smoothing_factor: f32,
+
+    /// Interval in milliseconds between auto-migration checks.
+    pub auto_migration_interval_ms: u64,
+
+    /// Number of pressure history entries to retain in the ring buffer.
+    pub pressure_history_size: usize,
+
+    /// Whether to enable automatic pressure-driven migration.
+    pub enable_auto_migration: bool,
 }
 
 impl Default for OrchestratorConfig {
@@ -44,6 +59,11 @@ impl Default for OrchestratorConfig {
             enable_compression: true,
             trace_max_events: 10000,
             shutdown_timeout_secs: 30,
+            pressure_sample_interval_ms: 1000,
+            pressure_smoothing_factor: 0.3,
+            auto_migration_interval_ms: 5000,
+            pressure_history_size: 256,
+            enable_auto_migration: true,
         }
     }
 }

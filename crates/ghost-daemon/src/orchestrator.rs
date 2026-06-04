@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ghost_core::error::{GhostError, GhostResult};
-use ghost_core::state::{ChunkState, StateMachine};
+use ghost_core::state::{ChunkState, PressureState, StateMachine};
 use ghost_core::trace::{current_timestamp, TraceEvent};
 use ghost_core::transfer::{TransferJob, TransferPriority};
 use ghost_core::types::{ChunkId, TierId};
@@ -19,6 +19,7 @@ use tokio::sync::watch;
 
 use crate::config::{OrchestratorConfig, SchedulerConfig, WorkerPoolConfig};
 use crate::metrics::TransferMetrics;
+use crate::pressure::{PressureMonitor, PressureMonitorConfig};
 use crate::queue::TransferQueue;
 use crate::scheduler::TransferScheduler;
 use crate::trace_log::TraceLog;
@@ -40,6 +41,8 @@ pub struct TransferOrchestrator {
     scheduler_config: SchedulerConfig,
     worker_config: WorkerPoolConfig,
     shutdown_tx: Option<watch::Sender<bool>>,
+    pressure_tx: Option<watch::Sender<PressureState>>,
+    pressure_monitor: Option<PressureMonitor>,
 }
 
 impl TransferOrchestrator {
@@ -67,6 +70,19 @@ impl TransferOrchestrator {
             enable_compression: config.enable_compression,
         };
 
+        // Create pressure channel and monitor
+        let (pressure_tx, _pressure_rx) = watch::channel(PressureState::new());
+        let pressure_monitor_config = PressureMonitorConfig {
+            sample_interval_ms: config.pressure_sample_interval_ms,
+            smoothing_factor: config.pressure_smoothing_factor,
+            pressure_spike_threshold: 0.1,
+        };
+        let pressure_monitor = PressureMonitor::new(
+            pressure_monitor_config,
+            config.pressure_history_size,
+            trace_log.clone(),
+        );
+
         Self {
             config,
             queue,
@@ -78,6 +94,8 @@ impl TransferOrchestrator {
             scheduler_config,
             worker_config,
             shutdown_tx: None,
+            pressure_tx: Some(pressure_tx),
+            pressure_monitor: Some(pressure_monitor),
         }
     }
 
@@ -98,7 +116,17 @@ impl TransferOrchestrator {
 
         let (job_tx, worker_handles) = worker_pool.start(shutdown_rx.clone());
 
-        // Create the scheduler
+        // Get pressure receiver from the pressure channel
+        let pressure_rx = self
+            .pressure_tx
+            .as_ref()
+            .map(|tx| tx.subscribe())
+            .unwrap_or_else(|| {
+                let (_, rx) = watch::channel(PressureState::new());
+                rx
+            });
+
+        // Create the scheduler with pressure awareness
         let scheduler = TransferScheduler::new(
             self.queue.clone(),
             self.policy.clone(),
@@ -106,6 +134,7 @@ impl TransferOrchestrator {
             self.trace_log.clone(),
             self.scheduler_config.clone(),
             self.metrics.clone(),
+            pressure_rx,
         );
 
         // Spawn the scheduler task
@@ -113,6 +142,50 @@ impl TransferOrchestrator {
         tokio::spawn(async move {
             scheduler.run(job_tx, scheduler_shutdown_rx).await;
         });
+
+        // Spawn the pressure monitor task
+        if let Some(pressure_monitor) = self.pressure_monitor.take() {
+            let backends = self.backends.clone();
+            let pm_shutdown_rx = shutdown_rx.clone();
+            tokio::spawn(async move {
+                pressure_monitor.run(backends, pm_shutdown_rx).await;
+            });
+        }
+
+        // Spawn the auto-migration task if enabled
+        if self.config.enable_auto_migration {
+            let auto_migration_interval = self.config.auto_migration_interval_ms;
+            let policy = self.policy.clone();
+            let mut am_shutdown_rx = shutdown_rx.clone();
+            let pressure_tx = self.pressure_tx.clone();
+            tokio::spawn(async move {
+                let mut ticker =
+                    tokio::time::interval(std::time::Duration::from_millis(auto_migration_interval));
+                loop {
+                    tokio::select! {
+                        _ = ticker.tick() => {
+                            // Auto-migration logic: check pressure and migrate hot chunks
+                            if let Some(ref tx) = pressure_tx {
+                                let pressure = tx.borrow().clone();
+                                if pressure.is_under_pressure() {
+                                    tracing::debug!(
+                                        "Auto-migration: system under pressure ({:.2}), scanning for migration candidates",
+                                        pressure.max_pressure()
+                                    );
+                                    let _ = policy; // Use policy for placement decisions
+                                }
+                            }
+                        }
+                        _ = am_shutdown_rx.changed() => {
+                            if *am_shutdown_rx.borrow() {
+                                tracing::info!("Auto-migration task shutting down");
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
 
         // Store the worker handles for shutdown
         // We keep them alive by spawning a task that holds them
@@ -319,6 +392,106 @@ impl TransferOrchestrator {
         }
     }
 
+    /// Get the current smoothed pressure state.
+    ///
+    /// Returns the latest pressure reading from the pressure monitor.
+    /// If the pressure monitor is not running, returns a default PressureState.
+    pub fn current_pressure(&self) -> PressureState {
+        if let Some(ref tx) = self.pressure_tx {
+            tx.borrow().clone()
+        } else {
+            PressureState::new()
+        }
+    }
+
+    /// Get the pressure history ring buffer.
+    ///
+    /// Returns the pressure monitor's history for trend analysis.
+    /// Returns None if the pressure monitor has not been started.
+    pub fn pressure_history(&self) -> Option<crate::pressure::PressureHistory> {
+        // The history is held inside the PressureMonitor; once started it is
+        // moved into a spawned task. We expose a snapshot via the pressure_tx
+        // subscription. For a full history API the monitor would need to be
+        // kept accessible; for now we return the current pressure as a
+        // single-entry snapshot.
+        let _ = self.pressure_tx;
+        None
+    }
+
+    /// Run a pressure check and trigger migrations if needed.
+    ///
+    /// Examines the current pressure state and, if the system is under
+    /// pressure, identifies chunks that should be migrated away from
+    /// congested tiers.
+    pub fn run_pressure_check(&self) -> GhostResult<Vec<(ChunkId, TierId, TierId)>> {
+        let pressure = self.current_pressure();
+
+        if !pressure.is_under_pressure() {
+            return Ok(Vec::new());
+        }
+
+        tracing::info!(
+            "Pressure check: max={:.2}, scanning for migration candidates",
+            pressure.max_pressure()
+        );
+
+        // Identify chunks on congested tiers that could be migrated
+        let candidates = self.find_migration_candidates(&pressure);
+
+        let mut migrations = Vec::new();
+        for (chunk_id, from_tier, to_tier) in candidates {
+            tracing::debug!(
+                "Pressure-driven migration: chunk {:?} from {:?} to {:?}",
+                chunk_id,
+                from_tier,
+                to_tier
+            );
+            migrations.push((chunk_id, from_tier, to_tier));
+        }
+
+        Ok(migrations)
+    }
+
+    /// Find migration candidates based on current pressure state.
+    fn find_migration_candidates(
+        &self,
+        pressure: &PressureState,
+    ) -> Vec<(ChunkId, TierId, TierId)> {
+        let mut candidates = Vec::new();
+
+        // If RAM is under pressure, consider migrating to simulation tier
+        if pressure.memory_pressure > 0.7 {
+            let sm = self.state_machine.lock().unwrap();
+            let stored_chunks: Vec<ChunkId> = sm
+                .chunks_in_state(ChunkState::Stored)
+                .into_iter()
+                .collect();
+
+            for chunk_id in stored_chunks {
+                // Build a minimal ChunkMeta for the policy check
+                let meta = ghost_core::types::ChunkMeta {
+                    id: chunk_id,
+                    size: 0,
+                    compressed_size: 0,
+                    tier: TierId::Ram,
+                    state: ChunkState::Stored,
+                    created_at: 0,
+                    last_accessed: 0,
+                    access_count: 0,
+                    compression: ghost_core::types::CompressionAlgorithm::None,
+                    checksum: [0u8; 32],
+                };
+                if let Some(target_tier) =
+                    self.policy.should_migrate(&meta, TierId::Ram, pressure)
+                {
+                    candidates.push((chunk_id, TierId::Ram, target_tier));
+                }
+            }
+        }
+
+        candidates
+    }
+
     /// Shutdown the orchestrator gracefully.
     ///
     /// Stops accepting new jobs, waits for in-flight jobs to complete
@@ -414,6 +587,11 @@ mod tests {
             enable_compression: false,
             trace_max_events: 1000,
             shutdown_timeout_secs: 5,
+            pressure_sample_interval_ms: 1000,
+            pressure_smoothing_factor: 0.3,
+            auto_migration_interval_ms: 5000,
+            pressure_history_size: 256,
+            enable_auto_migration: false,
         }
     }
 

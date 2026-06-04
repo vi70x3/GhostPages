@@ -17,7 +17,7 @@ use blake3;
 use bytes::Bytes;
 use config::SimConfig;
 use ghost_core::error::GhostError;
-use ghost_core::state::{ChunkState, StateMachine};
+use ghost_core::state::{ChunkState, PressureState, StateMachine};
 use ghost_core::types::TierId;
 use ghost_core::types::ChunkId;
 use ghost_tier::backend::{Allocation, BackendData, BackendError, StorageBackend};
@@ -389,6 +389,16 @@ impl StorageBackend for SimBackend {
         }
 
         Ok(())
+    }
+
+    fn pressure(&self) -> PressureState {
+        PressureState {
+            memory_pressure: self.memory_pressure() as f32,
+            vram_pressure: 0.0,
+            io_pressure: self.io_pressure() as f32,
+            queue_depth: 0,
+            throughput_bps: 0,
+        }
     }
 }
 

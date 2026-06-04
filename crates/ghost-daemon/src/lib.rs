@@ -33,6 +33,9 @@ pub mod worker;
 /// Transfer orchestrator.
 pub mod orchestrator;
 
+/// Pressure monitoring and history.
+pub mod pressure;
+
 pub use config::OrchestratorConfig;
 pub use engine::Engine;
 pub use orchestrator::TransferOrchestrator;

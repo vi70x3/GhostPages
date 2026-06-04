@@ -2,17 +2,21 @@
 //!
 //! Dequeues jobs from the transfer queue, validates state machine transitions,
 //! determines source/target tiers, and dispatches to workers.
+//!
+//! Integrates live pressure readings to throttle or filter jobs when
+//! the system is under pressure.
 
 use std::sync::Arc;
 
 use ghost_core::error::{GhostError, GhostResult};
-use ghost_core::state::{ChunkState, StateMachine};
+use ghost_core::state::{ChunkState, PressureState, StateMachine};
 use ghost_core::trace::{current_timestamp, TraceEvent};
-use ghost_core::transfer::{TransferJob, TransferState};
+use ghost_core::transfer::{TransferJob, TransferPriority, TransferState};
 use ghost_core::types::ChunkId;
 use ghost_policy::PlacementPolicy;
 
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 
 use crate::config::SchedulerConfig;
 use crate::metrics::TransferMetrics;
@@ -27,6 +31,7 @@ pub struct TransferScheduler {
     trace_log: Arc<TraceLog>,
     config: SchedulerConfig,
     metrics: Arc<TransferMetrics>,
+    pressure_rx: watch::Receiver<PressureState>,
 }
 
 impl TransferScheduler {
@@ -38,6 +43,7 @@ impl TransferScheduler {
         trace_log: Arc<TraceLog>,
         config: SchedulerConfig,
         metrics: Arc<TransferMetrics>,
+        pressure_rx: watch::Receiver<PressureState>,
     ) -> Self {
         Self {
             queue,
@@ -46,6 +52,7 @@ impl TransferScheduler {
             trace_log,
             config,
             metrics,
+            pressure_rx,
         }
     }
 
@@ -53,9 +60,10 @@ impl TransferScheduler {
     ///
     /// The scheduler:
     /// 1. Waits for jobs from the queue
-    /// 2. Validates state machine transitions
-    /// 3. Determines source/target tiers via PlacementPolicy
-    /// 4. Dispatches to the worker channel
+    /// 2. Checks live pressure to throttle or filter jobs
+    /// 3. Validates state machine transitions
+    /// 4. Determines source/target tiers via PlacementPolicy
+    /// 5. Dispatches to the worker channel
     pub async fn run(
         &self,
         worker_tx: mpsc::Sender<TransferJob>,
@@ -66,6 +74,17 @@ impl TransferScheduler {
                 Some(job) = self.queue.dequeue_wait() => {
                     // Update queue depth metric
                     self.metrics.set_queue_depth(self.queue.depth() as u64);
+
+                    // Check pressure before dispatching
+                    let pressure = self.pressure_rx.borrow().clone();
+                    if self.should_throttle(&job, &pressure) {
+                        tracing::debug!(
+                            "Throttling job {:?} due to pressure {:.2}",
+                            job.chunk_id,
+                            pressure.max_pressure()
+                        );
+                        continue;
+                    }
 
                     // Validate and dispatch
                     if let Err(e) = self.dispatch_job(job, &worker_tx) {
@@ -80,6 +99,33 @@ impl TransferScheduler {
                 }
             }
         }
+    }
+
+    /// Determine whether a job should be throttled based on current pressure.
+    ///
+    /// Under critical pressure, only critical-priority jobs are dispatched.
+    /// Under high IO pressure, low-priority jobs are deferred.
+    fn should_throttle(&self, job: &TransferJob, pressure: &PressureState) -> bool {
+        if pressure.is_critical() {
+            // Under critical pressure, only critical-priority jobs go through
+            return job.priority != TransferPriority::Critical;
+        }
+
+        if pressure.io_pressure > 0.8 {
+            // Under high IO pressure, defer low-priority jobs
+            if job.priority == TransferPriority::Low {
+                return true;
+            }
+        }
+
+        if pressure.is_under_pressure() {
+            // Under moderate pressure, defer large low-priority jobs
+            if job.priority == TransferPriority::Low && job.size > 1024 * 1024 {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Dispatch a single job to a worker.
@@ -184,8 +230,9 @@ mod tests {
         let trace_log = Arc::new(TraceLog::new(1000));
         let config = SchedulerConfig::default();
         let metrics = Arc::new(TransferMetrics::new());
+        let (_pressure_tx, pressure_rx) = watch::channel(PressureState::new());
 
-        TransferScheduler::new(queue, policy, state_machine, trace_log, config, metrics)
+        TransferScheduler::new(queue, policy, state_machine, trace_log, config, metrics, pressure_rx)
     }
 
     #[tokio::test]

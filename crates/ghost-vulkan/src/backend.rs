@@ -4,6 +4,7 @@
 //! will be implemented in Phase 4.
 
 use async_trait::async_trait;
+use ghost_core::state::PressureState;
 use ghost_core::types::TierId;
 use ghost_tier::backend::{Allocation, BackendError, StorageBackend};
 
@@ -86,5 +87,9 @@ impl StorageBackend for VulkanBackend {
         Err(BackendError::NotSupported(
             "Vulkan backend is not yet implemented (Phase 4)".to_string(),
         ))
+    }
+
+    fn pressure(&self) -> PressureState {
+        PressureState::new()
     }
 }

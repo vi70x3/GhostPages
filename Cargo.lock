@@ -318,9 +318,12 @@ dependencies = [
  "clap",
  "ghost-core",
  "ghost-ipc",
+ "hex",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -357,10 +360,12 @@ dependencies = [
  "ghost-tier",
  "parking_lot",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -372,6 +377,7 @@ dependencies = [
  "ghost-core",
  "ghost-metrics",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",

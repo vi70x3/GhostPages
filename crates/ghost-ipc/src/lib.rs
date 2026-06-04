@@ -3,22 +3,31 @@
 //! This crate provides the Unix socket-based IPC mechanism for
 //! communication between the GhostPages daemon and CLI tools.
 //!
-//! # Phase 0 Status
+//! # Architecture
 //!
-//! This is a skeleton implementation. Full IPC protocol, shared memory
-//! transport, and message types will be implemented in Phase 3.
+//! The IPC layer uses a simple binary protocol:
+//! - 4 bytes: big-endian u32 = payload length
+//! - N bytes: JSON-serialized request/response
+//!
+//! # Modules
+//!
+//! - [`protocol`]: IPC request/response message types
+//! - [`frame`]: Length-prefixed framing for the wire protocol
+//! - [`client`]: Async IPC client for connecting to the daemon
 
 #![warn(missing_docs)]
 
 /// IPC protocol message types.
 pub mod protocol;
 
-/// IPC server.
-pub mod server;
+/// Length-prefixed framing.
+pub mod frame;
 
 /// IPC client.
 pub mod client;
 
-pub use protocol::Message;
-pub use server::IpcServer;
-pub use client::IpcClient;
+pub use client::{IpcClient, StatusResponse};
+pub use frame::{read_frame, write_frame, MAX_FRAME_SIZE};
+pub use protocol::{
+    IpcErrorCode, IpcRequest, IpcResponse, TierInfo,
+};

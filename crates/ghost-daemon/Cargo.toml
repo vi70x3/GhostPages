@@ -17,8 +17,10 @@ ghost-metrics = { path = "../ghost-metrics" }
 ghost-ipc = { path = "../ghost-ipc" }
 tokio.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 parking_lot.workspace = true
 
 [dev-dependencies]

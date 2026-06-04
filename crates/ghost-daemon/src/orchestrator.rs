@@ -33,7 +33,7 @@ use crate::worker::WorkerPool;
 pub struct TransferOrchestrator {
     config: OrchestratorConfig,
     queue: Arc<TransferQueue>,
-    state_machine: Arc<std::sync::Mutex<StateMachine>>,
+    pub state_machine: Arc<std::sync::Mutex<StateMachine>>,
     trace_log: Arc<TraceLog>,
     metrics: Arc<TransferMetrics>,
     backends: HashMap<TierId, Arc<dyn StorageBackend>>,

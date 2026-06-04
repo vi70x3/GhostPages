@@ -14,8 +14,9 @@ ghost-metrics = { path = "../ghost-metrics" }
 bincode.workspace = true
 bytes.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["net", "rt", "io-util", "time", "macros"] }
 tracing.workspace = true
 
 [dev-dependencies]

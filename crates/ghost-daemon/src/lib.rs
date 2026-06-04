@@ -36,7 +36,11 @@ pub mod orchestrator;
 /// Pressure monitoring and history.
 pub mod pressure;
 
+/// IPC server.
+pub mod ipc_server;
+
 pub use config::OrchestratorConfig;
 pub use engine::Engine;
 pub use orchestrator::TransferOrchestrator;
 pub use pipeline::Pipeline;
+pub use ipc_server::{IpcServer, IpcServerConfig};

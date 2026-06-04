@@ -3,21 +3,21 @@
 //! Skeleton implementation for Phase 0. Full engine functionality
 //! will be implemented in Phase 1.
 
-use crate::config::DaemonConfig;
+use crate::config::OrchestratorConfig;
 use ghost_tier::RamBackend;
 use std::sync::Arc;
 
 /// Core engine managing tiers and policies.
 #[derive(Debug)]
 pub struct Engine {
-    config: DaemonConfig,
+    config: OrchestratorConfig,
     ram_backend: Arc<RamBackend>,
 }
 
 impl Engine {
     /// Create a new engine with the given configuration.
-    pub fn new(config: DaemonConfig) -> Self {
-        let ram_backend = Arc::new(RamBackend::new(config.ram_capacity));
+    pub fn new(config: OrchestratorConfig) -> Self {
+        let ram_backend = Arc::new(RamBackend::new(1024 * 1024));
         Self {
             config,
             ram_backend,
@@ -30,7 +30,7 @@ impl Engine {
     }
 
     /// Get the configuration.
-    pub fn config(&self) -> &DaemonConfig {
+    pub fn config(&self) -> &OrchestratorConfig {
         &self.config
     }
 }

@@ -9,6 +9,12 @@
 //! The policy is completely backend-agnostic — it knows nothing about
 //! how or where data is stored.
 
+pub mod lru;
 pub mod policy;
+pub mod pressure;
+pub mod weights;
 
-pub use policy::{MigrationDecision, PlacementPolicy, PolicyError, SystemState, TierUsage};
+pub use lru::{LruConfig, LruPolicy};
+pub use policy::{PlacementPolicy, PolicyError};
+pub use pressure::{PressureAwareConfig, PressureAwarePolicy};
+pub use weights::{best_tier, tier_pressure_score, tier_weight};

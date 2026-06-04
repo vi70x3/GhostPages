@@ -389,40 +389,7 @@ mod tests {
     use ghost_core::types::ChunkId;
     use ghost_tier::RamBackend;
 
-    use ghost_policy::{MigrationDecision, PlacementPolicy, PolicyError, SystemState};
-    use async_trait::async_trait;
-
-    struct TestPolicy;
-
-    #[async_trait]
-    impl PlacementPolicy for TestPolicy {
-        fn name(&self) -> &str {
-            "test"
-        }
-
-        async fn decide_migrations(
-            &self,
-            _state: &SystemState,
-        ) -> Result<Vec<MigrationDecision>, PolicyError> {
-            Ok(vec![])
-        }
-
-        async fn decide_eviction(
-            &self,
-            _tier: TierId,
-            _candidates: &[ghost_core::types::ChunkMeta],
-        ) -> Result<ChunkId, PolicyError> {
-            Err(PolicyError::NoCandidates)
-        }
-
-        async fn record_access(&self, _chunk_id: &ChunkId) -> Result<(), PolicyError> {
-            Ok(())
-        }
-
-        async fn hotness(&self, _chunk_id: &ChunkId) -> Result<f64, PolicyError> {
-            Ok(0.5)
-        }
-    }
+    use ghost_policy::{LruConfig, LruPolicy, PlacementPolicy};
 
     fn test_backends() -> HashMap<TierId, Arc<dyn StorageBackend>> {
         let mut backends = HashMap::new();
@@ -452,7 +419,7 @@ mod tests {
 
     fn test_orchestrator() -> TransferOrchestrator {
         let backends = test_backends();
-        let policy: Arc<dyn PlacementPolicy> = Arc::new(TestPolicy);
+        let policy: Arc<dyn PlacementPolicy> = Arc::new(LruPolicy::new(LruConfig::default()));
         TransferOrchestrator::new(test_config(), backends, policy)
     }
 

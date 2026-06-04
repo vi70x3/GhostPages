@@ -20,7 +20,6 @@ tracing.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 parking_lot.workspace = true
-async-trait.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

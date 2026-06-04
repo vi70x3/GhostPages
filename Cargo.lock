@@ -68,12 +68,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
-name = "arbitrary"
-version = "1.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
-
-[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -355,7 +349,6 @@ dependencies = [
 name = "ghost-daemon"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "ghost-compress",
  "ghost-core",
  "ghost-ipc",
@@ -401,9 +394,7 @@ dependencies = [
 name = "ghost-policy"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "ghost-core",
- "ghost-tier",
  "thiserror",
  "tokio",
  "tracing",
@@ -468,15 +459,6 @@ dependencies = [
  "ghost-tier",
  "thiserror",
  "tracing",
-]
-
-[[package]]
-name = "ghostpages-fuzz"
-version = "0.1.0"
-dependencies = [
- "ghost-compress",
- "ghost-core",
- "libfuzzer-sys",
 ]
 
 [[package]]
@@ -563,16 +545,6 @@ name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
-
-[[package]]
-name = "libfuzzer-sys"
-version = "0.4.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9fd2f41a1cba099f79a0b6b6c35656cf7c03351a7bae8ff0f28f25270f929d2"
-dependencies = [
- "arbitrary",
- "cc",
-]
 
 [[package]]
 name = "libloading"

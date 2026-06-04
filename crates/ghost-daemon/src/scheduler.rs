@@ -3,17 +3,14 @@
 //! Dequeues jobs from the transfer queue, validates state machine transitions,
 //! determines source/target tiers, and dispatches to workers.
 
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use ghost_core::error::{GhostError, GhostResult};
 use ghost_core::state::{ChunkState, StateMachine};
 use ghost_core::trace::{current_timestamp, TraceEvent};
 use ghost_core::transfer::{TransferJob, TransferState};
-use ghost_core::types::{ChunkId, TierId};
+use ghost_core::types::ChunkId;
 use ghost_policy::PlacementPolicy;
-use ghost_tier::StorageBackend;
 
 use tokio::sync::mpsc;
 
@@ -71,7 +68,7 @@ impl TransferScheduler {
                     self.metrics.set_queue_depth(self.queue.depth() as u64);
 
                     // Validate and dispatch
-                    if let Err(e) = self.dispatch_job(job, &worker_tx).await {
+                    if let Err(e) = self.dispatch_job(job, &worker_tx) {
                         tracing::warn!("Failed to dispatch job: {}", e);
                     }
                 }
@@ -86,7 +83,7 @@ impl TransferScheduler {
     }
 
     /// Dispatch a single job to a worker.
-    async fn dispatch_job(
+    fn dispatch_job(
         &self,
         mut job: TransferJob,
         worker_tx: &mpsc::Sender<TransferJob>,
@@ -154,8 +151,7 @@ impl TransferScheduler {
 
         // Send to worker
         worker_tx
-            .send(job)
-            .await
+            .try_send(job)
             .map_err(|_| GhostError::PipelineError("worker channel closed".to_string()))?;
 
         Ok(())
@@ -178,60 +174,12 @@ impl TransferScheduler {
 mod tests {
     use super::*;
     use ghost_core::types::ChunkId;
-    use ghost_tier::RamBackend;
 
-    use ghost_policy::{MigrationDecision, PlacementPolicy, PolicyError, SystemState};
-    use async_trait::async_trait;
-
-    /// A no-op placement policy for testing.
-    struct NoopPolicy;
-
-    #[async_trait]
-    impl PlacementPolicy for NoopPolicy {
-        fn name(&self) -> &str {
-            "noop"
-        }
-
-        async fn decide_migrations(
-            &self,
-            _state: &SystemState,
-        ) -> Result<Vec<MigrationDecision>, PolicyError> {
-            Ok(vec![])
-        }
-
-        async fn decide_eviction(
-            &self,
-            _tier: TierId,
-            _candidates: &[ghost_core::types::ChunkMeta],
-        ) -> Result<ChunkId, PolicyError> {
-            Err(PolicyError::NoCandidates)
-        }
-
-        async fn record_access(&self, _chunk_id: &ChunkId) -> Result<(), PolicyError> {
-            Ok(())
-        }
-
-        async fn hotness(&self, _chunk_id: &ChunkId) -> Result<f64, PolicyError> {
-            Ok(0.5)
-        }
-    }
-
-    fn test_backends() -> HashMap<TierId, Arc<dyn StorageBackend>> {
-        let mut backends = HashMap::new();
-        backends.insert(
-            TierId::Ram,
-            Arc::new(RamBackend::with_id(TierId::Ram, 1024 * 1024)) as Arc<dyn StorageBackend>,
-        );
-        backends.insert(
-            TierId::Simulation,
-            Arc::new(RamBackend::with_id(TierId::Simulation, 1024 * 1024)) as Arc<dyn StorageBackend>,
-        );
-        backends
-    }
+    use ghost_policy::{LruConfig, LruPolicy, PlacementPolicy};
 
     fn test_scheduler() -> TransferScheduler {
         let queue = Arc::new(TransferQueue::new(100));
-        let policy: Arc<dyn PlacementPolicy> = Arc::new(NoopPolicy);
+        let policy: Arc<dyn PlacementPolicy> = Arc::new(LruPolicy::new(LruConfig::default()));
         let state_machine = Arc::new(std::sync::Mutex::new(StateMachine::new()));
         let trace_log = Arc::new(TraceLog::new(1000));
         let config = SchedulerConfig::default();
@@ -267,7 +215,7 @@ mod tests {
         });
 
         // Wait for scheduler to be running
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Shutdown
         shutdown_tx.send(true).unwrap();

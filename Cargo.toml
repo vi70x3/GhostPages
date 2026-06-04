@@ -14,8 +14,9 @@ members = [
     "crates/ghost-metrics",
     "crates/ghost-replay",
     "crates/ghost-cli",
-    "fuzz",
 ]
+
+exclude = ["fuzz"]
 
 resolver = "2"
 

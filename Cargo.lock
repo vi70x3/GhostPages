@@ -347,6 +347,7 @@ dependencies = [
  "hex",
  "proptest",
  "serde",
+ "serde_json",
  "thiserror",
 ]
 

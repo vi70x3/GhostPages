@@ -66,6 +66,10 @@ pub enum GhostError {
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
 
+    /// Invalid state transition attempted.
+    #[error("invalid state transition from {from:?} to {to:?}")]
+    InvalidStateTransition { from: String, to: String },
+
     /// Generic internal error.
     #[error("internal error: {0}")]
     Internal(String),

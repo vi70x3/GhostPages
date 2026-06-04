@@ -159,6 +159,9 @@ pub struct ChunkMeta {
     /// Current storage tier.
     pub tier: TierId,
 
+    /// Current lifecycle state.
+    pub state: crate::state::ChunkState,
+
     /// Creation timestamp (Unix timestamp in seconds).
     pub created_at: u64,
 
@@ -195,6 +198,7 @@ impl ChunkMeta {
             size,
             compressed_size,
             tier,
+            state: crate::state::ChunkState::Allocated,
             created_at: now,
             last_accessed: now,
             access_count: 0,
@@ -350,6 +354,22 @@ mod tests {
         assert_eq!(meta.access_count, 1);
         meta.record_access();
         assert_eq!(meta.access_count, 2);
+    }
+
+    #[test]
+    fn test_chunk_meta_initial_state() {
+        let id = ChunkId::from_data(b"test");
+        let meta = ChunkMeta::new(
+            id,
+            100,
+            50,
+            TierId::Ram,
+            CompressionAlgorithm::None,
+            [0u8; 32],
+        );
+
+        // New chunks should start in Allocated state
+        assert_eq!(meta.state, crate::state::ChunkState::Allocated);
     }
 
     #[test]

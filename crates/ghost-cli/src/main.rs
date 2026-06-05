@@ -159,6 +159,24 @@ enum Commands {
         /// Path to the trace file.
         file: std::path::PathBuf,
     },
+
+    /// Show comprehensive diagnostic snapshot.
+    Diagnostics,
+
+    /// Show queue status.
+    Queue,
+
+    /// Show migration status.
+    Migration,
+
+    /// Show allocator status.
+    Allocator,
+
+    /// Show backend health status.
+    Backends,
+
+    /// Show replay status.
+    ReplayStatus,
 }
 
 // ─── Main ──────────────────────────────────────────────────────────────────────
@@ -651,10 +669,193 @@ async fn main() -> Result<()> {
                 }
             }
         }
+
+    // ─── Diagnostic Commands ─────────────────────────────────────────────────────
+
+    Commands::Diagnostics => {
+        let response = client
+            .send_request(ghost_ipc::protocol::IpcRequest::Diagnostics)
+            .await
+            .context("diagnostics request failed")?;
+        match response {
+            IpcResponse::Diagnostics { snapshot_json } => {
+                // Pretty-print the JSON diagnostic snapshot
+                let snapshot: serde_json::Value = serde_json::from_str(&snapshot_json)
+                    .context("failed to parse diagnostics JSON")?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&snapshot).unwrap_or(snapshot_json)
+                );
+            }
+            IpcResponse::Error { code, message } => {
+                eprintln!("Error ({:?}): {}", code, message);
+                std::process::exit(1);
+            }
+            other => {
+                eprintln!("Unexpected response: {:?}", other);
+                std::process::exit(1);
+            }
+        }
     }
 
+    Commands::Queue => {
+        let response = client
+            .send_request(ghost_ipc::protocol::IpcRequest::QueueStatus)
+            .await
+            .context("queue status request failed")?;
+        match response {
+            IpcResponse::QueueStatus {
+                depth,
+                capacity,
+                is_full,
+                submitted_total,
+                dequeued_total,
+            } => {
+                println!("=== Queue Status ===");
+                println!("Depth: {}/{}", depth, capacity);
+                println!("Full: {}", is_full);
+                println!("Total submitted: {}", submitted_total);
+                println!("Total dequeued: {}", dequeued_total);
+            }
+            IpcResponse::Error { code, message } => {
+                eprintln!("Error ({:?}): {}", code, message);
+                std::process::exit(1);
+            }
+            other => {
+                eprintln!("Unexpected response: {:?}", other);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    Commands::Migration => {
+        let response = client
+            .send_request(ghost_ipc::protocol::IpcRequest::MigrationStatus)
+            .await
+            .context("migration status request failed")?;
+        match response {
+            IpcResponse::MigrationStatus {
+                active_migrations,
+                promotions_total,
+                evictions_total,
+                failures_total,
+                bytes_migrated_total,
+            } => {
+                println!("=== Migration Status ===");
+                println!("Active migrations: {}", active_migrations);
+                println!("Total promotions: {}", promotions_total);
+                println!("Total evictions: {}", evictions_total);
+                println!("Total failures: {}", failures_total);
+                println!("Total bytes migrated: {}", bytes_migrated_total);
+            }
+            IpcResponse::Error { code, message } => {
+                eprintln!("Error ({:?}): {}", code, message);
+                std::process::exit(1);
+            }
+            other => {
+                eprintln!("Unexpected response: {:?}", other);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    Commands::Allocator => {
+        let response = client
+            .send_request(ghost_ipc::protocol::IpcRequest::AllocatorStatus)
+            .await
+            .context("allocator status request failed")?;
+        match response {
+            IpcResponse::AllocatorStatus {
+                allocated_bytes,
+                peak_allocated_bytes,
+                allocations_total,
+                deallocations_total,
+                active_allocations,
+            } => {
+                println!("=== Allocator Status ===");
+                println!("Allocated bytes: {}", allocated_bytes);
+                println!("Peak allocated bytes: {}", peak_allocated_bytes);
+                println!("Total allocations: {}", allocations_total);
+                println!("Total deallocations: {}", deallocations_total);
+                println!("Active allocations: {}", active_allocations);
+            }
+            IpcResponse::Error { code, message } => {
+                eprintln!("Error ({:?}): {}", code, message);
+                std::process::exit(1);
+            }
+            other => {
+                eprintln!("Unexpected response: {:?}", other);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    Commands::Backends => {
+        let response = client
+            .send_request(ghost_ipc::protocol::IpcRequest::BackendStatus)
+            .await
+            .context("backend status request failed")?;
+        match response {
+            IpcResponse::BackendStatus { tiers } => {
+                println!("=== Backend Health ===");
+                if tiers.is_empty() {
+                    println!("No backends registered.");
+                } else {
+                    for tier in &tiers {
+                        println!(
+                            "  {}: health={}, successes={}, failures={}, consecutive_failures={}",
+                            tier.tier_id,
+                            tier.health,
+                            tier.health_check_successes,
+                            tier.health_check_failures,
+                            tier.consecutive_failures
+                        );
+                    }
+                }
+            }
+            IpcResponse::Error { code, message } => {
+                eprintln!("Error ({:?}): {}", code, message);
+                std::process::exit(1);
+            }
+            other => {
+                eprintln!("Unexpected response: {:?}", other);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    Commands::ReplayStatus => {
+        let response = client
+            .send_request(ghost_ipc::protocol::IpcRequest::ReplayStatus)
+            .await
+            .context("replay status request failed")?;
+        match response {
+            IpcResponse::ReplayStatus {
+                replay_ops_total,
+                events_replayed_total,
+                validation_errors_total,
+                active_replays,
+            } => {
+                println!("=== Replay Status ===");
+                println!("Total replay operations: {}", replay_ops_total);
+                println!("Total events replayed: {}", events_replayed_total);
+                println!("Total validation errors: {}", validation_errors_total);
+                println!("Active replays: {}", active_replays);
+            }
+            IpcResponse::Error { code, message } => {
+                eprintln!("Error ({:?}): {}", code, message);
+                std::process::exit(1);
+            }
+            other => {
+                eprintln!("Unexpected response: {:?}", other);
+                std::process::exit(1);
+            }
+        }
+    }
+    }
     Ok(())
 }
+
 
 // ─── Parsing Helpers ───────────────────────────────────────────────────────────
 

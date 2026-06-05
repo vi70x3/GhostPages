@@ -301,6 +301,11 @@ fn event_type_index(event: &TraceEvent) -> u16 {
         TraceEvent::PressureEscalated { .. } => 30,
         TraceEvent::AllocationFailed { .. } => 31,
         TraceEvent::QueueThrottled { .. } => 32,
+        TraceEvent::PromotionQueued { .. } => 33,
+        TraceEvent::EvictionQueued { .. } => 34,
+        TraceEvent::BackpressureActivated { .. } => 35,
+        TraceEvent::BackpressureReleased { .. } => 36,
+        TraceEvent::MetricsExported { .. } => 37,
     }
 }
 

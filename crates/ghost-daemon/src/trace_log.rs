@@ -144,6 +144,11 @@ fn set_timestamp(event: &mut TraceEvent, ts: u64) {
         TraceEvent::PressureEscalated { timestamp, .. } => *timestamp = ts,
         TraceEvent::AllocationFailed { timestamp, .. } => *timestamp = ts,
         TraceEvent::QueueThrottled { timestamp, .. } => *timestamp = ts,
+        TraceEvent::PromotionQueued { timestamp, .. } => *timestamp = ts,
+        TraceEvent::EvictionQueued { timestamp, .. } => *timestamp = ts,
+        TraceEvent::BackpressureActivated { timestamp, .. } => *timestamp = ts,
+        TraceEvent::BackpressureReleased { timestamp, .. } => *timestamp = ts,
+        TraceEvent::MetricsExported { timestamp, .. } => *timestamp = ts,
     }
 }
 

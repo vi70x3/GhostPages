@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ghost_core::error::{GhostError, GhostResult};
 use ghost_core::state::{ChunkState, PressureState, StateMachine};
@@ -56,6 +56,8 @@ pub struct TransferOrchestrator {
     migration_engine: Arc<MigrationEngine>,
     /// Backpressure controller for overload management.
     backpressure_controller: Arc<BackpressureController>,
+    /// Instant when the orchestrator was created (for uptime tracking).
+    start_time: Instant,
 }
 
 impl TransferOrchestrator {
@@ -147,6 +149,7 @@ impl TransferOrchestrator {
             hotness_tracker,
             migration_engine,
             backpressure_controller,
+            start_time: Instant::now(),
         }
     }
 
@@ -759,6 +762,38 @@ impl TransferOrchestrator {
     /// Get a reference to the transfer queue.
     pub fn queue(&self) -> &TransferQueue {
         &self.queue
+    }
+
+    /// Get a reference to the migration engine.
+    pub fn migration_engine(&self) -> &MigrationEngine {
+        &self.migration_engine
+    }
+
+    /// Get a reference to the backends map.
+    pub fn backends(&self) -> &HashMap<TierId, Arc<dyn StorageBackend>> {
+        &self.backends
+    }
+
+    /// Build a diagnostic snapshot of the current system state.
+    ///
+    /// Collects health information from all subsystems into a single
+    /// JSON-serializable snapshot for monitoring and debugging.
+    pub fn diagnostic_snapshot(&self) -> crate::diagnostics::DiagnosticSnapshot {
+        use crate::diagnostics::{DiagnosticSnapshotBuilder, HealthStatus};
+
+        let pressure = self.current_pressure();
+        let mut snapshot = DiagnosticSnapshotBuilder::new(self.start_time).build_default();
+
+        snapshot.timestamp = current_timestamp();
+        snapshot.uptime_secs = self.start_time.elapsed().as_secs();
+        snapshot.pressure = pressure;
+
+        // Determine overall health from pressure and backend state
+        if pressure.is_under_pressure() {
+            snapshot.overall_health = HealthStatus::Degraded;
+        }
+
+        snapshot
     }
 
     /// Submit a transfer job to the queue.

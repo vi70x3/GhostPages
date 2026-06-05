@@ -54,7 +54,13 @@ pub mod migration;
 /// Backpressure controller for overload management.
 pub mod backpressure;
 
-pub use config::{BackpressureConfig, HealthConfig, MigrationConfig, OrchestratorConfig, RetryConfig};
+/// Diagnostic snapshot and builder.
+pub mod diagnostics;
+
+/// Prometheus metrics HTTP exporter.
+pub mod exporter;
+
+pub use config::{BackpressureConfig, HealthConfig, MetricsExporterConfig, MigrationConfig, OrchestratorConfig, RetryConfig};
 pub use engine::Engine;
 pub use health::{BackendHealth, HealthTracker};
 pub use ipc_server::{IpcServer, IpcServerConfig};

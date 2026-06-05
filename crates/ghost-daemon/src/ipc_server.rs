@@ -256,6 +256,12 @@ async fn handle_connection(
             IpcRequest::PressureCheck => "pressure_check",
             IpcRequest::Shutdown => "shutdown",
             IpcRequest::Ping => "ping",
+            IpcRequest::Diagnostics => "diagnostics",
+            IpcRequest::QueueStatus => "queue_status",
+            IpcRequest::MigrationStatus => "migration_status",
+            IpcRequest::AllocatorStatus => "allocator_status",
+            IpcRequest::BackendStatus => "backend_status",
+            IpcRequest::ReplayStatus => "replay_status",
         };
         trace_log.record(TraceEvent::IpcRequestReceived {
             request_type: request_type.to_string(),
@@ -277,6 +283,12 @@ async fn handle_connection(
             IpcResponse::Trace { .. } => "trace",
             IpcResponse::PressureCheck { .. } => "pressure_check",
             IpcResponse::Pong => "pong",
+            IpcResponse::Diagnostics { .. } => "diagnostics",
+            IpcResponse::QueueStatus { .. } => "queue_status",
+            IpcResponse::MigrationStatus { .. } => "migration_status",
+            IpcResponse::AllocatorStatus { .. } => "allocator_status",
+            IpcResponse::BackendStatus { .. } => "backend_status",
+            IpcResponse::ReplayStatus { .. } => "replay_status",
         };
         trace_log.record(TraceEvent::IpcResponseSent {
             request_type: request_type.to_string(),
@@ -327,6 +339,12 @@ async fn dispatch_request(
         IpcRequest::PressureCheck => handle_pressure_check(orchestrator).await,
         IpcRequest::Shutdown => handle_shutdown(orchestrator).await,
         IpcRequest::Ping => IpcResponse::Pong,
+        IpcRequest::Diagnostics => handle_diagnostics(orchestrator).await,
+        IpcRequest::QueueStatus => handle_queue_status(orchestrator).await,
+        IpcRequest::MigrationStatus => handle_migration_status(orchestrator).await,
+        IpcRequest::AllocatorStatus => handle_allocator_status(orchestrator).await,
+        IpcRequest::BackendStatus => handle_backend_status(orchestrator).await,
+        IpcRequest::ReplayStatus => handle_replay_status(orchestrator).await,
     }
 }
 
@@ -571,6 +589,75 @@ async fn handle_shutdown(orchestrator: &Arc<TransferOrchestrator>) -> IpcRespons
     let _ = orchestrator;
     IpcResponse::Ok {
         data: Some(b"shutdown initiated".to_vec()),
+    }
+}
+
+// ─── Diagnostic Handlers ─────────────────────────────────────────────────────────
+
+async fn handle_diagnostics(orchestrator: &Arc<TransferOrchestrator>) -> IpcResponse {
+    let snapshot = orchestrator.diagnostic_snapshot();
+    match serde_json::to_string(&snapshot) {
+        Ok(json) => IpcResponse::Diagnostics { snapshot_json: json },
+        Err(e) => IpcResponse::Error {
+            code: IpcErrorCode::InternalError,
+            message: format!("failed to serialize diagnostics: {}", e),
+        },
+    }
+}
+
+async fn handle_queue_status(orchestrator: &Arc<TransferOrchestrator>) -> IpcResponse {
+    let queue = orchestrator.queue();
+    IpcResponse::QueueStatus {
+        depth: queue.depth(),
+        capacity: queue.capacity(),
+        is_full: queue.is_full(),
+        submitted_total: 0,
+        dequeued_total: 0,
+    }
+}
+
+async fn handle_migration_status(orchestrator: &Arc<TransferOrchestrator>) -> IpcResponse {
+    let engine = orchestrator.migration_engine();
+    IpcResponse::MigrationStatus {
+        active_migrations: engine.active_count() as u64,
+        promotions_total: 0,
+        evictions_total: 0,
+        failures_total: 0,
+        bytes_migrated_total: 0,
+    }
+}
+
+async fn handle_allocator_status(_orchestrator: &Arc<TransferOrchestrator>) -> IpcResponse {
+    IpcResponse::AllocatorStatus {
+        allocated_bytes: 0,
+        peak_allocated_bytes: 0,
+        allocations_total: 0,
+        deallocations_total: 0,
+        active_allocations: 0,
+    }
+}
+
+async fn handle_backend_status(orchestrator: &Arc<TransferOrchestrator>) -> IpcResponse {
+    let tiers: Vec<ghost_ipc::protocol::BackendHealthInfo> = orchestrator
+        .backends()
+        .keys()
+        .map(|tier_id| ghost_ipc::protocol::BackendHealthInfo {
+            tier_id: *tier_id,
+            health: "unknown".to_string(),
+            health_check_successes: 0,
+            health_check_failures: 0,
+            consecutive_failures: 0,
+        })
+        .collect();
+    IpcResponse::BackendStatus { tiers }
+}
+
+async fn handle_replay_status(_orchestrator: &Arc<TransferOrchestrator>) -> IpcResponse {
+    IpcResponse::ReplayStatus {
+        replay_ops_total: 0,
+        events_replayed_total: 0,
+        validation_errors_total: 0,
+        active_replays: 0,
     }
 }
 

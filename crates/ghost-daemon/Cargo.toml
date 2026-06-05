@@ -24,6 +24,8 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 parking_lot.workspace = true
+axum.workspace = true
+prometheus.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

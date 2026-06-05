@@ -77,6 +77,24 @@ pub enum IpcRequest {
 
     /// Ping for liveness check.
     Ping,
+
+    /// Get full diagnostic snapshot.
+    Diagnostics,
+
+    /// Get queue status.
+    QueueStatus,
+
+    /// Get migration status.
+    MigrationStatus,
+
+    /// Get allocator status.
+    AllocatorStatus,
+
+    /// Get backend health status.
+    BackendStatus,
+
+    /// Get replay status.
+    ReplayStatus,
 }
 
 // ─── Response Types ────────────────────────────────────────────────────────────
@@ -143,6 +161,72 @@ pub enum IpcResponse {
     /// Pong response to ping.
     Pong,
 
+    /// Diagnostic snapshot response.
+    Diagnostics {
+        /// JSON-serialized diagnostic snapshot.
+        snapshot_json: String,
+    },
+
+    /// Queue status response.
+    QueueStatus {
+        /// Current queue depth.
+        depth: usize,
+        /// Queue capacity.
+        capacity: usize,
+        /// Whether the queue is full.
+        is_full: bool,
+        /// Total jobs submitted.
+        submitted_total: u64,
+        /// Total jobs dequeued.
+        dequeued_total: u64,
+    },
+
+    /// Migration status response.
+    MigrationStatus {
+        /// Currently active migrations.
+        active_migrations: u64,
+        /// Total promotions.
+        promotions_total: u64,
+        /// Total evictions.
+        evictions_total: u64,
+        /// Total migration failures.
+        failures_total: u64,
+        /// Total bytes migrated.
+        bytes_migrated_total: u64,
+    },
+
+    /// Allocator status response.
+    AllocatorStatus {
+        /// Currently allocated bytes.
+        allocated_bytes: u64,
+        /// Peak allocated bytes.
+        peak_allocated_bytes: u64,
+        /// Total allocations.
+        allocations_total: u64,
+        /// Total deallocations.
+        deallocations_total: u64,
+        /// Active allocations.
+        active_allocations: u64,
+    },
+
+    /// Backend health status response.
+    BackendStatus {
+        /// Per-tier health information.
+        tiers: Vec<BackendHealthInfo>,
+    },
+
+    /// Replay status response.
+    ReplayStatus {
+        /// Total replay operations.
+        replay_ops_total: u64,
+        /// Total events replayed.
+        events_replayed_total: u64,
+        /// Total validation errors.
+        validation_errors_total: u64,
+        /// Currently active replays.
+        active_replays: u64,
+    },
+
     /// Operation failed.
     Error {
         /// Error code.
@@ -165,6 +249,21 @@ pub struct TierInfo {
     pub used_bytes: u64,
     /// Number of chunks stored in this tier.
     pub chunk_count: usize,
+}
+
+/// Health information for a single backend tier.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackendHealthInfo {
+    /// Tier identifier.
+    pub tier_id: TierId,
+    /// Health status string (e.g., "healthy", "degraded", "unavailable").
+    pub health: String,
+    /// Total successful health checks.
+    pub health_check_successes: u64,
+    /// Total failed health checks.
+    pub health_check_failures: u64,
+    /// Consecutive failure count.
+    pub consecutive_failures: u64,
 }
 
 // ─── Error Codes ────────────────────────────────────────────────────────────────

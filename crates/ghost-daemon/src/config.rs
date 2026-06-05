@@ -321,6 +321,29 @@ impl Default for BackpressureConfig {
     }
 }
 
+/// Configuration for the Prometheus metrics HTTP exporter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsExporterConfig {
+    /// Address to bind the HTTP server to.
+    pub bind_address: String,
+
+    /// Port to bind the HTTP server to.
+    pub port: u16,
+
+    /// Whether to enable the metrics exporter.
+    pub enabled: bool,
+}
+
+impl Default for MetricsExporterConfig {
+    fn default() -> Self {
+        Self {
+            bind_address: "127.0.0.1".to_string(),
+            port: 9090,
+            enabled: true,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

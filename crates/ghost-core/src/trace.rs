@@ -263,6 +263,44 @@ pub enum TraceEvent {
         capacity: usize,
         timestamp: u64,
     },
+
+    /// A chunk was queued for promotion to a faster tier.
+    PromotionQueued {
+        chunk_id: ChunkId,
+        from: TierId,
+        to: TierId,
+        timestamp: u64,
+    },
+
+    /// A chunk was queued for eviction from a tier.
+    EvictionQueued {
+        chunk_id: ChunkId,
+        tier: TierId,
+        reason: EvictionReason,
+        timestamp: u64,
+    },
+
+    /// Backpressure was activated due to system overload.
+    BackpressureActivated {
+        memory_pressure: f32,
+        vram_pressure: f32,
+        io_pressure: f32,
+        timestamp: u64,
+    },
+
+    /// Backpressure was released after pressure subsided.
+    BackpressureReleased {
+        memory_pressure: f32,
+        vram_pressure: f32,
+        io_pressure: f32,
+        timestamp: u64,
+    },
+
+    /// Metrics were exported successfully.
+    MetricsExported {
+        metrics_count: usize,
+        timestamp: u64,
+    },
 }
 
 impl TraceEvent {
@@ -302,6 +340,11 @@ impl TraceEvent {
             TraceEvent::PressureEscalated { timestamp, .. } => *timestamp,
             TraceEvent::AllocationFailed { timestamp, .. } => *timestamp,
             TraceEvent::QueueThrottled { timestamp, .. } => *timestamp,
+            TraceEvent::PromotionQueued { timestamp, .. } => *timestamp,
+            TraceEvent::EvictionQueued { timestamp, .. } => *timestamp,
+            TraceEvent::BackpressureActivated { timestamp, .. } => *timestamp,
+            TraceEvent::BackpressureReleased { timestamp, .. } => *timestamp,
+            TraceEvent::MetricsExported { timestamp, .. } => *timestamp,
         }
     }
 
@@ -341,6 +384,11 @@ impl TraceEvent {
             TraceEvent::PressureEscalated { .. } => None,
             TraceEvent::AllocationFailed { .. } => None,
             TraceEvent::QueueThrottled { .. } => None,
+            TraceEvent::PromotionQueued { chunk_id, .. } => Some(*chunk_id),
+            TraceEvent::EvictionQueued { chunk_id, .. } => Some(*chunk_id),
+            TraceEvent::BackpressureActivated { .. } => None,
+            TraceEvent::BackpressureReleased { .. } => None,
+            TraceEvent::MetricsExported { .. } => None,
         }
     }
 
@@ -380,6 +428,11 @@ impl TraceEvent {
             TraceEvent::PressureEscalated { .. } => "pressure_escalated",
             TraceEvent::AllocationFailed { .. } => "allocation_failed",
             TraceEvent::QueueThrottled { .. } => "queue_throttled",
+            TraceEvent::PromotionQueued { .. } => "promotion_queued",
+            TraceEvent::EvictionQueued { .. } => "eviction_queued",
+            TraceEvent::BackpressureActivated { .. } => "backpressure_activated",
+            TraceEvent::BackpressureReleased { .. } => "backpressure_released",
+            TraceEvent::MetricsExported { .. } => "metrics_exported",
         }
     }
 }
@@ -706,6 +759,57 @@ macro_rules! trace_event {
             } => $crate::trace::TraceEvent::QueueThrottled {
                 queue_depth,
                 capacity,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::PromotionQueued {
+                chunk_id,
+                from,
+                to,
+                ..
+            } => $crate::trace::TraceEvent::PromotionQueued {
+                chunk_id,
+                from,
+                to,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::EvictionQueued {
+                chunk_id,
+                tier,
+                reason,
+                ..
+            } => $crate::trace::TraceEvent::EvictionQueued {
+                chunk_id,
+                tier,
+                reason,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::BackpressureActivated {
+                memory_pressure,
+                vram_pressure,
+                io_pressure,
+                ..
+            } => $crate::trace::TraceEvent::BackpressureActivated {
+                memory_pressure,
+                vram_pressure,
+                io_pressure,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::BackpressureReleased {
+                memory_pressure,
+                vram_pressure,
+                io_pressure,
+                ..
+            } => $crate::trace::TraceEvent::BackpressureReleased {
+                memory_pressure,
+                vram_pressure,
+                io_pressure,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::MetricsExported {
+                metrics_count,
+                ..
+            } => $crate::trace::TraceEvent::MetricsExported {
+                metrics_count,
                 timestamp: ts,
             },
         }

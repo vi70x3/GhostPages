@@ -49,6 +49,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Metrics
 prometheus = "0.13"
 
+# HTTP server (metrics exporter)
+axum = "0.7"
+
 # Compression
 zstd = "0.13"
 

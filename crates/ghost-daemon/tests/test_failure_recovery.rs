@@ -9,7 +9,7 @@ use ghost_daemon::orchestrator::TransferOrchestrator;
 use ghost_daemon::trace_log::TraceLog;
 use ghost_policy::pressure::PressureAwareConfig;
 use ghost_policy::pressure::PressureAwarePolicy;
-use ghost_sim::config::{FailureConfig, SimConfig};
+use ghost_sim::config::{FailureConfig, FailurePattern, SimConfig};
 use ghost_sim::SimBackend;
 use ghost_tier::RamBackend;
 use std::collections::HashMap;
@@ -29,6 +29,10 @@ fn test_backends_with_failures() -> HashMap<TierId, Arc<dyn ghost_tier::backend:
         read_failure_rate: 0.3,
         alloc_failure_rate: 0.1,
         corruption_on_failure: false,
+        corruption_rate: 0.0,
+        timeout_rate: 0.0,
+        device_loss_rate: 0.0,
+        failure_pattern: FailurePattern::Random,
     };
     let sim_config = SimConfig::with_capacity(16 * 1024 * 1024)
         .with_seed(42)

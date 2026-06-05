@@ -38,6 +38,27 @@ impl Default for BandwidthConfig {
     }
 }
 
+/// Pattern of failure injection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailurePattern {
+    /// Failures occur randomly based on probability.
+    Random,
+    /// Failures occur in bursts (several in quick succession).
+    Burst,
+    /// Failure rate increases over time (degrading backend).
+    Degrading,
+    /// Failures occur intermittently (on/off pattern).
+    Intermittent,
+    /// One failure triggers cascading failures across operations.
+    Cascading,
+}
+
+impl Default for FailurePattern {
+    fn default() -> Self {
+        FailurePattern::Random
+    }
+}
+
 /// Configuration for failure injection.
 #[derive(Debug, Clone)]
 pub struct FailureConfig {
@@ -49,6 +70,14 @@ pub struct FailureConfig {
     pub alloc_failure_rate: f64,
     /// Whether to simulate corruption on failure.
     pub corruption_on_failure: bool,
+    /// Probability of data corruption on write (0.0 to 1.0), independent of failure.
+    pub corruption_rate: f64,
+    /// Probability of an operation timing out (0.0 to 1.0).
+    pub timeout_rate: f64,
+    /// Probability of a device loss event (0.0 to 1.0).
+    pub device_loss_rate: f64,
+    /// Pattern of failure injection.
+    pub failure_pattern: FailurePattern,
 }
 
 impl Default for FailureConfig {
@@ -58,6 +87,10 @@ impl Default for FailureConfig {
             read_failure_rate: 0.0,
             alloc_failure_rate: 0.0,
             corruption_on_failure: false,
+            corruption_rate: 0.0,
+            timeout_rate: 0.0,
+            device_loss_rate: 0.0,
+            failure_pattern: FailurePattern::Random,
         }
     }
 }
@@ -138,6 +171,30 @@ impl SimConfig {
         self.fragmentation_factor = factor.clamp(0.0, 1.0);
         self
     }
+
+    /// Set the failure pattern for injection.
+    pub fn with_failure_pattern(mut self, pattern: FailurePattern) -> Self {
+        self.failure.failure_pattern = pattern;
+        self
+    }
+
+    /// Set the corruption rate for the failure configuration.
+    pub fn with_corruption_rate(mut self, rate: f64) -> Self {
+        self.failure.corruption_rate = rate.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set the timeout rate for the failure configuration.
+    pub fn with_timeout_rate(mut self, rate: f64) -> Self {
+        self.failure.timeout_rate = rate.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set the device loss rate for the failure configuration.
+    pub fn with_device_loss_rate(mut self, rate: f64) -> Self {
+        self.failure.device_loss_rate = rate.clamp(0.0, 1.0);
+        self
+    }
 }
 
 #[cfg(test)]
@@ -177,5 +234,53 @@ mod tests {
         let latency = LatencyConfig::default();
         assert_eq!(latency.base, Duration::from_micros(10));
         assert!((latency.jitter_fraction - 0.1).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_failure_pattern_default() {
+        let pattern: FailurePattern = Default::default();
+        assert_eq!(pattern, FailurePattern::Random);
+    }
+
+    #[test]
+    fn test_sim_config_with_failure_pattern() {
+        let config = SimConfig::default()
+            .with_failure_pattern(FailurePattern::Burst);
+        assert_eq!(config.failure.failure_pattern, FailurePattern::Burst);
+    }
+
+    #[test]
+    fn test_sim_config_with_corruption_rate() {
+        let config = SimConfig::default().with_corruption_rate(0.3);
+        assert!((config.failure.corruption_rate - 0.3).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_sim_config_with_timeout_rate() {
+        let config = SimConfig::default().with_timeout_rate(0.2);
+        assert!((config.failure.timeout_rate - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_sim_config_with_device_loss_rate() {
+        let config = SimConfig::default().with_device_loss_rate(0.05);
+        assert!((config.failure.device_loss_rate - 0.05).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_corruption_rate_clamped() {
+        let config = SimConfig::default().with_corruption_rate(1.5);
+        assert!((config.failure.corruption_rate - 1.0).abs() < f64::EPSILON);
+        let config2 = SimConfig::default().with_corruption_rate(-0.5);
+        assert!((config2.failure.corruption_rate).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_failure_config_default_new_fields() {
+        let failure = FailureConfig::default();
+        assert!((failure.corruption_rate).abs() < f64::EPSILON);
+        assert!((failure.timeout_rate).abs() < f64::EPSILON);
+        assert!((failure.device_loss_rate).abs() < f64::EPSILON);
+        assert_eq!(failure.failure_pattern, FailurePattern::Random);
     }
 }

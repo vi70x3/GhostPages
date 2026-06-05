@@ -4,7 +4,7 @@
 //! configurations: high failure rates, bandwidth saturation, latency
 //! extremes, and fragmentation scenarios.
 
-use ghost_sim::config::{BandwidthConfig, FailureConfig, LatencyConfig, SimConfig};
+use ghost_sim::config::{BandwidthConfig, FailureConfig, FailurePattern, LatencyConfig, SimConfig};
 use ghost_sim::SimBackend;
 use ghost_tier::backend::{Allocation, BackendData};
 use ghost_tier::StorageBackend;
@@ -30,6 +30,10 @@ async fn test_high_failure_rate_stress() {
             read_failure_rate: 0.5,
             alloc_failure_rate: 0.3,
             corruption_on_failure: false,
+            corruption_rate: 0.0,
+            timeout_rate: 0.0,
+            device_loss_rate: 0.0,
+            failure_pattern: FailurePattern::Random,
         })
         .with_latency(LatencyConfig {
             base: Duration::from_micros(0),
@@ -258,6 +262,10 @@ async fn test_concurrent_stress_with_failures() {
             read_failure_rate: 0.2,
             alloc_failure_rate: 0.1,
             corruption_on_failure: false,
+            corruption_rate: 0.0,
+            timeout_rate: 0.0,
+            device_loss_rate: 0.0,
+            failure_pattern: FailurePattern::Random,
         });
 
     let backend = Arc::new(SimBackend::new(config));

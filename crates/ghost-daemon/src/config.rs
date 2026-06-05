@@ -1,9 +1,10 @@
 //! Configuration for the GhostPages daemon transfer engine.
 //!
 //! Defines all configuration types for the orchestrator, scheduler,
-//! worker pool, and transfer queue.
+//! worker pool, transfer queue, health tracking, and retry behavior.
 
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Configuration for the transfer orchestrator.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +156,171 @@ pub struct OrchestratorStatus {
     pub shutting_down: bool,
 }
 
+/// Configuration for backend health tracking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthConfig {
+    /// Number of failures before a backend is marked degraded.
+    pub degraded_threshold: u64,
+
+    /// Number of failures before a backend is marked unavailable.
+    pub unavailable_threshold: u64,
+
+    /// Time window for counting failures (seconds).
+    pub failure_window_secs: u64,
+
+    /// Interval between recovery probes when a backend is unavailable (seconds).
+    pub recovery_probe_interval_secs: u64,
+
+    /// Number of successful probes required to mark a backend as recovered.
+    pub recovery_success_threshold: u64,
+}
+
+impl Default for HealthConfig {
+    fn default() -> Self {
+        Self {
+            degraded_threshold: 3,
+            unavailable_threshold: 10,
+            failure_window_secs: 60,
+            recovery_probe_interval_secs: 5,
+            recovery_success_threshold: 3,
+        }
+    }
+}
+
+/// Configuration for retry behavior with bounded exponential backoff.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryConfig {
+    /// Maximum number of retry attempts.
+    pub max_retries: u32,
+
+    /// Base delay before the first retry (ms).
+    pub base_delay_ms: u64,
+
+    /// Maximum delay cap for exponential backoff (ms).
+    pub max_delay_ms: u64,
+
+    /// Multiplier for exponential backoff.
+    pub backoff_multiplier: f64,
+
+    /// Jitter factor (0.0 = no jitter, 1.0 = full jitter).
+    pub jitter_factor: f64,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            base_delay_ms: 100,
+            max_delay_ms: 30_000,
+            backoff_multiplier: 2.0,
+            jitter_factor: 0.25,
+        }
+    }
+}
+
+impl RetryConfig {
+    /// Calculate the delay for a given retry attempt.
+    pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
+        if attempt == 0 {
+            return Duration::from_millis(0);
+        }
+
+        let base = self.base_delay_ms as f64;
+        let multiplier = self.backoff_multiplier.powi((attempt - 1) as i32);
+        let delay_ms = (base * multiplier).min(self.max_delay_ms as f64);
+        let jitter_range = delay_ms * self.jitter_factor;
+        let jittered = delay_ms - (jitter_range * 0.5); // Simplified jitter
+
+        Duration::from_millis(jittered.max(0.0) as u64)
+    }
+}
+
+/// Configuration for the migration engine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MigrationConfig {
+    /// Maximum number of concurrent migration operations.
+    pub max_concurrent_migrations: usize,
+
+    /// Hotness threshold above which a chunk is considered "hot" and eligible for promotion.
+    pub hot_threshold: f32,
+
+    /// Hotness threshold below which a chunk is considered "cold" and eligible for eviction.
+    pub cold_threshold: f32,
+
+    /// Minimum interval between migration evaluations for the same chunk (seconds).
+    pub min_migration_interval_secs: u64,
+
+    /// Maximum number of chunks to migrate in a single evaluation cycle.
+    pub max_migrations_per_cycle: usize,
+
+    /// Whether to enable automatic promotion of hot chunks to faster tiers.
+    pub enable_promotion: bool,
+
+    /// Whether to enable automatic eviction of cold chunks from pressured tiers.
+    pub enable_eviction: bool,
+
+    /// Pressure threshold above which eviction is triggered.
+    pub eviction_pressure_threshold: f32,
+
+    /// Size limit in bytes for chunks eligible for migration.
+    pub max_chunk_size_for_migration: usize,
+
+    /// Timeout in seconds for a single migration operation.
+    pub migration_timeout_secs: u64,
+}
+
+impl Default for MigrationConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_migrations: 2,
+            hot_threshold: 0.5,
+            cold_threshold: 0.2,
+            min_migration_interval_secs: 60,
+            max_migrations_per_cycle: 16,
+            enable_promotion: true,
+            enable_eviction: true,
+            eviction_pressure_threshold: 0.7,
+            max_chunk_size_for_migration: 256 * 1024 * 1024, // 256 MB
+            migration_timeout_secs: 120,
+        }
+    }
+}
+
+/// Configuration for the backpressure controller.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackpressureConfig {
+    /// Pressure threshold for throttling non-critical transfers (0.0-1.0).
+    pub throttle_threshold: f32,
+
+    /// Pressure threshold for rejecting all non-critical transfers (0.0-1.0).
+    pub reject_threshold: f32,
+
+    /// Pressure threshold for critical-only mode (0.0-1.0).
+    pub critical_threshold: f32,
+
+    /// Interval in milliseconds between backpressure evaluations.
+    pub evaluation_interval_ms: u64,
+
+    /// Whether to enable backpressure-based transfer throttling.
+    pub enabled: bool,
+
+    /// Cooldown period in seconds after pressure subsides before resuming normal operations.
+    pub cooldown_secs: u64,
+}
+
+impl Default for BackpressureConfig {
+    fn default() -> Self {
+        Self {
+            throttle_threshold: 0.7,
+            reject_threshold: 0.85,
+            critical_threshold: 0.95,
+            evaluation_interval_ms: 1000,
+            enabled: true,
+            cooldown_secs: 10,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +360,57 @@ mod tests {
         assert!(!status.queue_full);
         assert_eq!(status.active_workers, 0);
         assert!(!status.shutting_down);
+    }
+
+    #[test]
+    fn test_health_config_default() {
+        let config = HealthConfig::default();
+        assert_eq!(config.degraded_threshold, 3);
+        assert_eq!(config.unavailable_threshold, 10);
+        assert_eq!(config.failure_window_secs, 60);
+        assert_eq!(config.recovery_probe_interval_secs, 5);
+        assert_eq!(config.recovery_success_threshold, 3);
+    }
+
+    #[test]
+    fn test_retry_config_default() {
+        let config = RetryConfig::default();
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.base_delay_ms, 100);
+        assert_eq!(config.max_delay_ms, 30_000);
+        assert!((config.backoff_multiplier - 2.0).abs() < f64::EPSILON);
+        assert!((config.jitter_factor - 0.25).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_retry_config_delay_capped() {
+        let config = RetryConfig {
+            base_delay_ms: 1000,
+            max_delay_ms: 2000,
+            backoff_multiplier: 10.0,
+            jitter_factor: 0.0,
+            ..Default::default()
+        };
+        let delay = config.delay_for_attempt(10);
+        assert_eq!(delay, Duration::from_millis(2000));
+    }
+
+    #[test]
+    fn test_migration_config_default() {
+        let config = MigrationConfig::default();
+        assert_eq!(config.max_concurrent_migrations, 2);
+        assert!((config.hot_threshold - 0.5).abs() < f32::EPSILON);
+        assert!((config.cold_threshold - 0.2).abs() < f32::EPSILON);
+        assert!(config.enable_promotion);
+        assert!(config.enable_eviction);
+    }
+
+    #[test]
+    fn test_backpressure_config_default() {
+        let config = BackpressureConfig::default();
+        assert!((config.throttle_threshold - 0.7).abs() < f32::EPSILON);
+        assert!((config.reject_threshold - 0.85).abs() < f32::EPSILON);
+        assert!((config.critical_threshold - 0.95).abs() < f32::EPSILON);
+        assert!(config.enabled);
     }
 }

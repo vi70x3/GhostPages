@@ -12,6 +12,12 @@ pub mod config;
 /// Core engine.
 pub mod engine;
 
+/// Backend health tracking.
+pub mod health;
+
+/// Retry configuration with bounded backoff.
+pub mod retry;
+
 /// Async transfer pipeline.
 pub mod pipeline;
 
@@ -39,8 +45,20 @@ pub mod pressure;
 /// IPC server.
 pub mod ipc_server;
 
-pub use config::OrchestratorConfig;
+/// Hotness tracking for access pattern analysis.
+pub mod hotness_tracker;
+
+/// Migration engine for pressure-driven chunk migration.
+pub mod migration;
+
+/// Backpressure controller for overload management.
+pub mod backpressure;
+
+pub use config::{BackpressureConfig, HealthConfig, MigrationConfig, OrchestratorConfig, RetryConfig};
 pub use engine::Engine;
+pub use health::{BackendHealth, HealthTracker};
 pub use ipc_server::{IpcServer, IpcServerConfig};
+pub use migration::{MigrationEngine, MigrationStats, PendingMigration};
 pub use orchestrator::TransferOrchestrator;
 pub use pipeline::Pipeline;
+pub use retry::RetryConfig as RetryConfigType;

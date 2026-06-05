@@ -17,8 +17,12 @@ use ghost_tier::StorageBackend;
 
 use tokio::sync::watch;
 
-use crate::config::{OrchestratorConfig, SchedulerConfig, WorkerPoolConfig};
+use crate::backpressure::BackpressureController;
+use crate::config::{BackpressureConfig, MigrationConfig, OrchestratorConfig, SchedulerConfig, WorkerPoolConfig};
+use crate::health::HealthTracker;
+use crate::hotness_tracker::HotnessTracker;
 use crate::metrics::TransferMetrics;
+use crate::migration::MigrationEngine;
 use crate::pressure::{PressureMonitor, PressureMonitorConfig};
 use crate::queue::TransferQueue;
 use crate::scheduler::TransferScheduler;
@@ -44,6 +48,14 @@ pub struct TransferOrchestrator {
     shutdown_tx: Option<watch::Sender<bool>>,
     pressure_tx: Option<watch::Sender<PressureState>>,
     pressure_monitor: Option<PressureMonitor>,
+    /// Backend health tracker for failure detection and recovery.
+    health_tracker: HealthTracker,
+    /// Hotness tracker for access pattern analysis.
+    hotness_tracker: Arc<HotnessTracker>,
+    /// Migration engine for pressure-driven chunk migration.
+    migration_engine: Arc<MigrationEngine>,
+    /// Backpressure controller for overload management.
+    backpressure_controller: Arc<BackpressureController>,
 }
 
 impl TransferOrchestrator {
@@ -58,8 +70,10 @@ impl TransferOrchestrator {
         let state_machine = Arc::new(std::sync::Mutex::new(StateMachine::new()));
         let metrics = Arc::new(TransferMetrics::new());
 
-        // Emit BackendRegistered events for each backend
+        // Create health tracker and register all backends
+        let mut health_tracker = HealthTracker::new(crate::health::HealthConfig::default());
         for tier_id in backends.keys() {
+            health_tracker.register(*tier_id);
             trace_log.record(TraceEvent::BackendRegistered {
                 tier: *tier_id,
                 timestamp: current_timestamp(),
@@ -92,6 +106,30 @@ impl TransferOrchestrator {
             trace_log.clone(),
         );
 
+        // Create hotness tracker
+        let hotness_tracker = Arc::new(HotnessTracker::new(
+            config.pressure_history_size,
+            trace_log.clone(),
+        ));
+
+        // Create migration engine
+        let migration_config = MigrationConfig::default();
+        let migration_engine = Arc::new(MigrationEngine::new(
+            migration_config,
+            policy.clone(),
+            hotness_tracker.clone(),
+            state_machine.clone(),
+            trace_log.clone(),
+            backends.clone(),
+        ));
+
+        // Create backpressure controller
+        let backpressure_config = BackpressureConfig::default();
+        let backpressure_controller = Arc::new(BackpressureController::new(
+            backpressure_config,
+            trace_log.clone(),
+        ));
+
         Self {
             config,
             queue,
@@ -105,6 +143,10 @@ impl TransferOrchestrator {
             shutdown_tx: None,
             pressure_tx: Some(pressure_tx),
             pressure_monitor: Some(pressure_monitor),
+            health_tracker,
+            hotness_tracker,
+            migration_engine,
+            backpressure_controller,
         }
     }
 
@@ -167,10 +209,29 @@ impl TransferOrchestrator {
             });
         }
 
+        // Spawn the backpressure controller task
+        let bp_controller = self.backpressure_controller.clone();
+        let bp_pressure_rx = self
+            .pressure_tx
+            .as_ref()
+            .map(|tx| tx.subscribe())
+            .unwrap_or_else(|| {
+                let (_, rx) = watch::channel(PressureState::new());
+                rx
+            });
+        let bp_shutdown_rx = shutdown_rx.clone();
+        tokio::spawn(async move {
+            bp_controller.run(bp_pressure_rx, bp_shutdown_rx).await;
+        });
+
         // Spawn the auto-migration task if enabled
         if self.config.enable_auto_migration {
             let auto_migration_interval = self.config.auto_migration_interval_ms;
-            let policy = self.policy.clone();
+            let migration_engine = self.migration_engine.clone();
+            let backpressure_controller = self.backpressure_controller.clone();
+            let queue = self.queue.clone();
+            let _trace_log = self.trace_log.clone();
+            let hotness_tracker = self.hotness_tracker.clone();
             let mut am_shutdown_rx = shutdown_rx.clone();
             let pressure_tx = self.pressure_tx.clone();
             tokio::spawn(async move {
@@ -180,17 +241,62 @@ impl TransferOrchestrator {
                 loop {
                     tokio::select! {
                         _ = ticker.tick() => {
-                            // Auto-migration logic: check pressure and migrate hot chunks
+                            // Auto-migration logic: evaluate migration candidates
                             if let Some(ref tx) = pressure_tx {
                                 let pressure = *tx.borrow();
-                                if pressure.is_under_pressure() {
-                                    tracing::debug!(
-                                        "Auto-migration: system under pressure ({:.2}), scanning for migration candidates",
-                                        pressure.max_pressure()
+
+                                // Evaluate migration candidates using the migration engine
+                                let candidates = migration_engine.evaluate(&pressure);
+
+                                for candidate in candidates {
+                                    // Check backpressure before submitting each migration
+                                    if !backpressure_controller.should_allow(candidate.priority) {
+                                        tracing::debug!(
+                                            "Auto-migration: skipping {:?} due to backpressure ({:?})",
+                                            candidate.chunk_id,
+                                            backpressure_controller.current_action()
+                                        );
+                                        continue;
+                                    }
+
+                                    // Check if migration engine has capacity
+                                    if !migration_engine.has_capacity() {
+                                        tracing::debug!(
+                                            "Auto-migration: at capacity, deferring remaining candidates"
+                                        );
+                                        break;
+                                    }
+
+                                    // Create and submit the transfer job
+                                    let job = TransferJob::new(
+                                        candidate.chunk_id,
+                                        candidate.from_tier,
+                                        candidate.to_tier,
+                                        candidate.size,
+                                        candidate.priority,
                                     );
-                                    let _ = policy; // Use policy for placement decisions
+
+                                    if let Err(e) = queue.submit_priority(job) {
+                                        tracing::warn!(
+                                            "Auto-migration: failed to submit job for {:?}: {}",
+                                            candidate.chunk_id,
+                                            e
+                                        );
+                                    } else {
+                                        migration_engine.mark_active(candidate.chunk_id);
+                                        tracing::debug!(
+                                            "Auto-migration: submitted {:?} from {:?} to {:?} (priority: {:?})",
+                                            candidate.chunk_id,
+                                            candidate.from_tier,
+                                            candidate.to_tier,
+                                            candidate.priority
+                                        );
+                                    }
                                 }
                             }
+
+                            // Periodic hotness decay
+                            hotness_tracker.decay_all();
                         }
                         _ = am_shutdown_rx.changed() => {
                             if *am_shutdown_rx.borrow() {

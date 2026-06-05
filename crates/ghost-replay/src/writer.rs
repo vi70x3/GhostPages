@@ -182,6 +182,13 @@ fn event_type_index(event: &TraceEvent) -> u16 {
         TraceEvent::CompressionCompleted { .. } => 23,
         TraceEvent::DecompressionStarted { .. } => 24,
         TraceEvent::DecompressionCompleted { .. } => 25,
+        TraceEvent::BackendDegraded { .. } => 26,
+        TraceEvent::BackendRecovered { .. } => 27,
+        TraceEvent::MigrationRolledBack { .. } => 28,
+        TraceEvent::RetryExhausted { .. } => 29,
+        TraceEvent::PressureEscalated { .. } => 30,
+        TraceEvent::AllocationFailed { .. } => 31,
+        TraceEvent::QueueThrottled { .. } => 32,
     }
 }
 

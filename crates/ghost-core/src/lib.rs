@@ -14,6 +14,7 @@
 //! - [`TraceEvent`]: Trace log events
 
 pub mod error;
+pub mod hotness;
 pub mod state;
 pub mod trace;
 pub mod transfer;

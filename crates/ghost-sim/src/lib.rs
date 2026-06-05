@@ -615,6 +615,10 @@ mod tests {
             read_failure_rate: 0.0,
             alloc_failure_rate: 0.0,
             corruption_on_failure: false,
+            corruption_rate: 0.0,
+            timeout_rate: 0.0,
+            device_loss_rate: 0.0,
+            failure_pattern: config::FailurePattern::Random,
         };
 
         let config = SimConfig::with_capacity(1024 * 1024)
@@ -646,6 +650,10 @@ mod tests {
             read_failure_rate: 1.0, // Always fail
             alloc_failure_rate: 0.0,
             corruption_on_failure: false,
+            corruption_rate: 0.0,
+            timeout_rate: 0.0,
+            device_loss_rate: 0.0,
+            failure_pattern: config::FailurePattern::Random,
         };
 
         let config = SimConfig::with_capacity(1024 * 1024)
@@ -832,6 +840,10 @@ mod tests {
             read_failure_rate: 0.0,
             alloc_failure_rate: 0.0,
             corruption_on_failure: true,
+            corruption_rate: 0.0,
+            timeout_rate: 0.0,
+            device_loss_rate: 0.0,
+            failure_pattern: config::FailurePattern::Random,
         };
 
         let config = SimConfig::with_capacity(1024 * 1024)

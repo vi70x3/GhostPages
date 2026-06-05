@@ -137,6 +137,13 @@ fn set_timestamp(event: &mut TraceEvent, ts: u64) {
         TraceEvent::CompressionCompleted { timestamp, .. } => *timestamp = ts,
         TraceEvent::DecompressionStarted { timestamp, .. } => *timestamp = ts,
         TraceEvent::DecompressionCompleted { timestamp, .. } => *timestamp = ts,
+        TraceEvent::BackendDegraded { timestamp, .. } => *timestamp = ts,
+        TraceEvent::BackendRecovered { timestamp, .. } => *timestamp = ts,
+        TraceEvent::MigrationRolledBack { timestamp, .. } => *timestamp = ts,
+        TraceEvent::RetryExhausted { timestamp, .. } => *timestamp = ts,
+        TraceEvent::PressureEscalated { timestamp, .. } => *timestamp = ts,
+        TraceEvent::AllocationFailed { timestamp, .. } => *timestamp = ts,
+        TraceEvent::QueueThrottled { timestamp, .. } => *timestamp = ts,
     }
 }
 

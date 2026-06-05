@@ -209,6 +209,60 @@ pub enum TraceEvent {
         decompressed_size: usize,
         timestamp: u64,
     },
+
+    /// A backend has degraded in performance or reliability.
+    BackendDegraded {
+        tier: TierId,
+        reason: String,
+        timestamp: u64,
+    },
+
+    /// A backend has recovered from a degraded state.
+    BackendRecovered {
+        tier: TierId,
+        timestamp: u64,
+    },
+
+    /// A migration was rolled back after failure.
+    MigrationRolledBack {
+        chunk_id: ChunkId,
+        from: TierId,
+        to: TierId,
+        reason: String,
+        timestamp: u64,
+    },
+
+    /// All retry attempts for a transfer have been exhausted.
+    RetryExhausted {
+        chunk_id: ChunkId,
+        from: TierId,
+        to: TierId,
+        attempts: u32,
+        timestamp: u64,
+    },
+
+    /// System pressure has escalated to a higher level.
+    PressureEscalated {
+        memory_pressure: f32,
+        vram_pressure: f32,
+        io_pressure: f32,
+        timestamp: u64,
+    },
+
+    /// An allocation operation failed.
+    AllocationFailed {
+        tier: TierId,
+        size: usize,
+        reason: String,
+        timestamp: u64,
+    },
+
+    /// The transfer queue is throttling submissions.
+    QueueThrottled {
+        queue_depth: usize,
+        capacity: usize,
+        timestamp: u64,
+    },
 }
 
 impl TraceEvent {
@@ -241,6 +295,13 @@ impl TraceEvent {
             TraceEvent::CompressionCompleted { timestamp, .. } => *timestamp,
             TraceEvent::DecompressionStarted { timestamp, .. } => *timestamp,
             TraceEvent::DecompressionCompleted { timestamp, .. } => *timestamp,
+            TraceEvent::BackendDegraded { timestamp, .. } => *timestamp,
+            TraceEvent::BackendRecovered { timestamp, .. } => *timestamp,
+            TraceEvent::MigrationRolledBack { timestamp, .. } => *timestamp,
+            TraceEvent::RetryExhausted { timestamp, .. } => *timestamp,
+            TraceEvent::PressureEscalated { timestamp, .. } => *timestamp,
+            TraceEvent::AllocationFailed { timestamp, .. } => *timestamp,
+            TraceEvent::QueueThrottled { timestamp, .. } => *timestamp,
         }
     }
 
@@ -273,6 +334,13 @@ impl TraceEvent {
             TraceEvent::CompressionCompleted { chunk_id, .. } => Some(*chunk_id),
             TraceEvent::DecompressionStarted { chunk_id, .. } => Some(*chunk_id),
             TraceEvent::DecompressionCompleted { chunk_id, .. } => Some(*chunk_id),
+            TraceEvent::BackendDegraded { .. } => None,
+            TraceEvent::BackendRecovered { .. } => None,
+            TraceEvent::MigrationRolledBack { chunk_id, .. } => Some(*chunk_id),
+            TraceEvent::RetryExhausted { chunk_id, .. } => Some(*chunk_id),
+            TraceEvent::PressureEscalated { .. } => None,
+            TraceEvent::AllocationFailed { .. } => None,
+            TraceEvent::QueueThrottled { .. } => None,
         }
     }
 
@@ -305,6 +373,13 @@ impl TraceEvent {
             TraceEvent::CompressionCompleted { .. } => "compression_completed",
             TraceEvent::DecompressionStarted { .. } => "decompression_started",
             TraceEvent::DecompressionCompleted { .. } => "decompression_completed",
+            TraceEvent::BackendDegraded { .. } => "backend_degraded",
+            TraceEvent::BackendRecovered { .. } => "backend_recovered",
+            TraceEvent::MigrationRolledBack { .. } => "migration_rolled_back",
+            TraceEvent::RetryExhausted { .. } => "retry_exhausted",
+            TraceEvent::PressureEscalated { .. } => "pressure_escalated",
+            TraceEvent::AllocationFailed { .. } => "allocation_failed",
+            TraceEvent::QueueThrottled { .. } => "queue_throttled",
         }
     }
 }
@@ -561,6 +636,76 @@ macro_rules! trace_event {
                 chunk_id,
                 compressed_size,
                 decompressed_size,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::BackendDegraded { tier, reason, .. } => {
+                $crate::trace::TraceEvent::BackendDegraded {
+                    tier,
+                    reason,
+                    timestamp: ts,
+                }
+            }
+            $crate::trace::TraceEvent::BackendRecovered { tier, .. } => {
+                $crate::trace::TraceEvent::BackendRecovered {
+                    tier,
+                    timestamp: ts,
+                }
+            }
+            $crate::trace::TraceEvent::MigrationRolledBack {
+                chunk_id,
+                from,
+                to,
+                reason,
+                ..
+            } => $crate::trace::TraceEvent::MigrationRolledBack {
+                chunk_id,
+                from,
+                to,
+                reason,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::RetryExhausted {
+                chunk_id,
+                from,
+                to,
+                attempts,
+                ..
+            } => $crate::trace::TraceEvent::RetryExhausted {
+                chunk_id,
+                from,
+                to,
+                attempts,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::PressureEscalated {
+                memory_pressure,
+                vram_pressure,
+                io_pressure,
+                ..
+            } => $crate::trace::TraceEvent::PressureEscalated {
+                memory_pressure,
+                vram_pressure,
+                io_pressure,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::AllocationFailed {
+                tier,
+                size,
+                reason,
+                ..
+            } => $crate::trace::TraceEvent::AllocationFailed {
+                tier,
+                size,
+                reason,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::QueueThrottled {
+                queue_depth,
+                capacity,
+                ..
+            } => $crate::trace::TraceEvent::QueueThrottled {
+                queue_depth,
+                capacity,
                 timestamp: ts,
             },
         }

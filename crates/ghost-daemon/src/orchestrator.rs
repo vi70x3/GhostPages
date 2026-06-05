@@ -3,7 +3,7 @@
 //! The top-level orchestrator that ties together the transfer queue, scheduler,
 //! worker pool, state machine, trace log, and metrics into a unified API.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -41,7 +41,7 @@ pub struct TransferOrchestrator {
     pub state_machine: Arc<std::sync::Mutex<StateMachine>>,
     trace_log: Arc<TraceLog>,
     metrics: Arc<TransferMetrics>,
-    backends: HashMap<TierId, Arc<dyn StorageBackend>>,
+    backends: BTreeMap<TierId, Arc<dyn StorageBackend>>,
     policy: Arc<dyn PlacementPolicy>,
     scheduler_config: SchedulerConfig,
     worker_config: WorkerPoolConfig,
@@ -64,7 +64,7 @@ impl TransferOrchestrator {
     /// Create a new transfer orchestrator.
     pub fn new(
         config: OrchestratorConfig,
-        backends: HashMap<TierId, Arc<dyn StorageBackend>>,
+        backends: BTreeMap<TierId, Arc<dyn StorageBackend>>,
         policy: Arc<dyn PlacementPolicy>,
     ) -> Self {
         let trace_log = Arc::new(TraceLog::new(config.trace_max_events));
@@ -782,7 +782,7 @@ impl TransferOrchestrator {
     }
 
     /// Get a reference to the backends map.
-    pub fn backends(&self) -> &HashMap<TierId, Arc<dyn StorageBackend>> {
+    pub fn backends(&self) -> &BTreeMap<TierId, Arc<dyn StorageBackend>> {
         &self.backends
     }
 
@@ -829,8 +829,8 @@ mod tests {
 
     use ghost_policy::{LruConfig, LruPolicy, PlacementPolicy};
 
-    fn test_backends() -> HashMap<TierId, Arc<dyn StorageBackend>> {
-        let mut backends = HashMap::new();
+    fn test_backends() -> BTreeMap<TierId, Arc<dyn StorageBackend>> {
+        let mut backends = BTreeMap::new();
         backends.insert(
             TierId::Ram,
             Arc::new(RamBackend::with_id(TierId::Ram, 1024 * 1024)) as Arc<dyn StorageBackend>,
@@ -859,6 +859,7 @@ mod tests {
             pressure_history_size: 256,
             enable_auto_migration: false,
             deterministic_mode: false,
+            rng_seed: Some(42),
         }
     }
 

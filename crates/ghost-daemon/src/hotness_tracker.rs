@@ -4,7 +4,7 @@
 //! Provides methods to query hotness, find hot/cold chunks, and
 //! periodically decay recency scores.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use ghost_core::hotness::ChunkHotness;
@@ -17,7 +17,7 @@ use crate::trace_log::TraceLog;
 
 /// Hotness tracker that maintains access pattern analysis for all chunks.
 pub struct HotnessTracker {
-    hotness_map: Arc<RwLock<HashMap<ChunkId, ChunkHotness>>>,
+    hotness_map: Arc<RwLock<BTreeMap<ChunkId, ChunkHotness>>>,
     trace_log: Arc<TraceLog>,
     /// Maximum number of chunks to track.
     max_tracked: usize,
@@ -27,7 +27,7 @@ impl HotnessTracker {
     /// Create a new hotness tracker.
     pub fn new(max_tracked: usize, trace_log: Arc<TraceLog>) -> Self {
         Self {
-            hotness_map: Arc::new(RwLock::new(HashMap::with_capacity(max_tracked))),
+            hotness_map: Arc::new(RwLock::new(BTreeMap::new())),
             trace_log,
             max_tracked,
         }

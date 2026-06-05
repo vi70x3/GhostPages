@@ -4,7 +4,7 @@
 //! promoted to faster tiers, evicted from pressured tiers, or left in place.
 //! Uses the PlacementPolicy trait for all placement decisions.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use ghost_core::state::{ChunkState, PressureState, StateMachine};
@@ -65,12 +65,12 @@ pub struct MigrationEngine {
     hotness_tracker: Arc<HotnessTracker>,
     state_machine: Arc<std::sync::Mutex<StateMachine>>,
     trace_log: Arc<TraceLog>,
-    backends: HashMap<TierId, Arc<dyn StorageBackend>>,
+    backends: BTreeMap<TierId, Arc<dyn StorageBackend>>,
     stats: Arc<std::sync::Mutex<MigrationStats>>,
     /// Set of chunks currently being migrated.
-    active_migrations: Arc<std::sync::Mutex<HashSet<ChunkId>>>,
+    active_migrations: Arc<std::sync::Mutex<BTreeSet<ChunkId>>>,
     /// Timestamp of the last migration for each chunk (rate limiting).
-    last_migration: Arc<std::sync::Mutex<HashMap<ChunkId, u64>>>,
+    last_migration: Arc<std::sync::Mutex<BTreeMap<ChunkId, u64>>>,
 }
 
 impl MigrationEngine {
@@ -81,7 +81,7 @@ impl MigrationEngine {
         hotness_tracker: Arc<HotnessTracker>,
         state_machine: Arc<std::sync::Mutex<StateMachine>>,
         trace_log: Arc<TraceLog>,
-        backends: HashMap<TierId, Arc<dyn StorageBackend>>,
+        backends: BTreeMap<TierId, Arc<dyn StorageBackend>>,
     ) -> Self {
         Self {
             config,
@@ -91,8 +91,8 @@ impl MigrationEngine {
             trace_log,
             backends,
             stats: Arc::new(std::sync::Mutex::new(MigrationStats::default())),
-            active_migrations: Arc::new(std::sync::Mutex::new(HashSet::new())),
-            last_migration: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            active_migrations: Arc::new(std::sync::Mutex::new(BTreeSet::new())),
+            last_migration: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -412,8 +412,8 @@ mod tests {
     use super::*;
     use ghost_policy::lru::{LruConfig, LruPolicy};
 
-    fn test_backends() -> HashMap<TierId, Arc<dyn StorageBackend>> {
-        let mut backends = HashMap::new();
+    fn test_backends() -> BTreeMap<TierId, Arc<dyn StorageBackend>> {
+        let mut backends = BTreeMap::new();
         backends.insert(
             TierId::Ram,
             Arc::new(ghost_tier::RamBackend::new(1024 * 1024)) as Arc<dyn StorageBackend>,

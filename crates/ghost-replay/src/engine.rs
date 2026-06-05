@@ -3,7 +3,7 @@
 //! Replays recorded trace events to validate state machine transitions,
 //! measure outcomes, and compare placement policies.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use ghost_core::error::GhostResult;
@@ -98,7 +98,7 @@ pub struct ChunkReplayState {
 pub struct ReplayEngine {
     config: ReplayConfig,
     state_machine: StateMachine,
-    chunk_states: HashMap<ChunkId, ChunkReplayState>,
+    chunk_states: BTreeMap<ChunkId, ChunkReplayState>,
     summary: ReplaySummary,
     event_count: u64,
 }
@@ -109,7 +109,7 @@ impl ReplayEngine {
         Self {
             config,
             state_machine: StateMachine::new(),
-            chunk_states: HashMap::new(),
+            chunk_states: BTreeMap::new(),
             summary: ReplaySummary::default(),
             event_count: 0,
         }
@@ -196,7 +196,7 @@ impl ReplayEngine {
     pub fn validate(&self, events: &[TraceEvent]) -> GhostResult<Vec<ReplayValidationError>> {
         let mut errors = Vec::new();
         let mut state_machine = StateMachine::new();
-        let mut chunk_states: HashMap<ChunkId, ChunkState> = HashMap::new();
+        let mut chunk_states: BTreeMap<ChunkId, ChunkState> = BTreeMap::new();
 
         for (i, event) in events.iter().enumerate() {
             if let Some(chunk_id) = event.chunk_id() {
@@ -261,7 +261,7 @@ impl ReplayEngine {
     }
 
     /// Get chunk states tracked during replay.
-    pub fn chunk_states(&self) -> &HashMap<ChunkId, ChunkReplayState> {
+    pub fn chunk_states(&self) -> &BTreeMap<ChunkId, ChunkReplayState> {
         &self.chunk_states
     }
 

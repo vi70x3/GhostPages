@@ -25,7 +25,7 @@ use parking_lot::Mutex;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -40,7 +40,7 @@ use tokio::time::sleep;
 pub struct SimBackend {
     config: SimConfig,
     /// Storage map: offset -> data bytes.
-    storage: Mutex<HashMap<usize, Bytes>>,
+    storage: Mutex<BTreeMap<usize, Bytes>>,
     /// Next allocation offset.
     next_offset: AtomicU64,
     /// Current used bytes.
@@ -50,9 +50,9 @@ pub struct SimBackend {
     /// Metrics.
     metrics: Arc<SimMetrics>,
     /// Simple state map for simulation (replaces full state machine).
-    state_map: Mutex<HashMap<ChunkId, ChunkState>>,
+    state_map: Mutex<BTreeMap<ChunkId, ChunkState>>,
     /// Set of allocated offsets (tracks all allocations, even before write).
-    allocated_offsets: Mutex<HashSet<usize>>,
+    allocated_offsets: Mutex<BTreeSet<usize>>,
     /// Time the backend was created.
     created_at: Instant,
 }
@@ -63,13 +63,13 @@ impl SimBackend {
         let rng = ChaCha8Rng::seed_from_u64(config.seed);
         Self {
             config,
-            storage: Mutex::new(HashMap::new()),
+            storage: Mutex::new(BTreeMap::new()),
             next_offset: AtomicU64::new(0),
             used: AtomicU64::new(0),
             rng: Mutex::new(rng),
             metrics: Arc::new(SimMetrics::new()),
-            state_map: Mutex::new(HashMap::new()),
-            allocated_offsets: Mutex::new(HashSet::new()),
+            state_map: Mutex::new(BTreeMap::new()),
+            allocated_offsets: Mutex::new(BTreeSet::new()),
             created_at: Instant::now(),
         }
     }

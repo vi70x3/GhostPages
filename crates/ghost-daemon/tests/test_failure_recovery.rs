@@ -12,12 +12,12 @@ use ghost_policy::pressure::PressureAwarePolicy;
 use ghost_sim::config::{FailureConfig, FailurePattern, SimConfig};
 use ghost_sim::SimBackend;
 use ghost_tier::RamBackend;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-fn test_backends_with_failures() -> HashMap<TierId, Arc<dyn ghost_tier::backend::StorageBackend>> {
-    let mut backends: HashMap<TierId, Arc<dyn ghost_tier::backend::StorageBackend>> =
-        HashMap::new();
+fn test_backends_with_failures() -> BTreeMap<TierId, Arc<dyn ghost_tier::backend::StorageBackend>> {
+    let mut backends: BTreeMap<TierId, Arc<dyn ghost_tier::backend::StorageBackend>> =
+        BTreeMap::new();
     backends.insert(
         TierId::Ram,
         Arc::new(RamBackend::new(4 * 1024 * 1024)) as Arc<dyn ghost_tier::backend::StorageBackend>,
@@ -155,8 +155,8 @@ async fn test_trace_log_records_failures() {
 
 #[tokio::test]
 async fn test_zero_failure_rate_succeeds() {
-    let mut backends: HashMap<TierId, Arc<dyn ghost_tier::backend::StorageBackend>> =
-        HashMap::new();
+    let mut backends: BTreeMap<TierId, Arc<dyn ghost_tier::backend::StorageBackend>> =
+        BTreeMap::new();
     backends.insert(
         TierId::Ram,
         Arc::new(RamBackend::new(4 * 1024 * 1024)) as Arc<dyn ghost_tier::backend::StorageBackend>,

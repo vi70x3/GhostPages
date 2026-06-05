@@ -6,7 +6,7 @@
 use ghost_tier::backend::{Allocation, BackendData};
 use ghost_tier::{RamBackend, StorageBackend};
 use proptest::prelude::*;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use tokio::runtime::Runtime;
 
 /// Capacity for property tests.
@@ -36,7 +36,7 @@ proptest! {
     ) {
         let rt = Runtime::new().unwrap();
         let backend = RamBackend::new(CAPACITY);
-        let mut live: HashMap<usize, usize> = HashMap::new();
+        let mut live: BTreeMap<usize, usize> = BTreeMap::new();
         let mut total_used: usize = 0;
 
         for (is_alloc, value) in operations {

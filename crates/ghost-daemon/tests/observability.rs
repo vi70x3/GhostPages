@@ -3,7 +3,7 @@
 //! Validates the metrics registry, diagnostic snapshot, metrics exporter,
 //! and trace event coverage.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use ghost_core::state::PressureState;
@@ -312,9 +312,9 @@ fn test_new_trace_events_serialization_roundtrip() {
 
 // ─── Orchestrator Diagnostic Integration Tests ───────────────────────────────
 
-fn test_backends() -> HashMap<TierId, Arc<dyn ghost_tier::backend::StorageBackend>> {
-    let mut backends: HashMap<TierId, Arc<dyn ghost_tier::backend::StorageBackend>> =
-        HashMap::new();
+fn test_backends() -> BTreeMap<TierId, Arc<dyn ghost_tier::backend::StorageBackend>> {
+    let mut backends: BTreeMap<TierId, Arc<dyn ghost_tier::backend::StorageBackend>> =
+        BTreeMap::new();
     backends.insert(
         TierId::Ram,
         Arc::new(RamBackend::new(4 * 1024 * 1024)) as Arc<dyn ghost_tier::backend::StorageBackend>,

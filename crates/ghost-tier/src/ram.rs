@@ -8,7 +8,7 @@ use bytes::Bytes;
 use ghost_core::state::PressureState;
 use ghost_core::types::TierId;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -31,7 +31,7 @@ use crate::backend::{Allocation, BackendData, BackendError, StorageBackend};
 pub struct RamBackend {
     id: TierId,
     capacity: usize,
-    storage: Arc<Mutex<HashMap<usize, Bytes>>>,
+    storage: Arc<Mutex<BTreeMap<usize, Bytes>>>,
     next_offset: Arc<Mutex<usize>>,
     used: Arc<Mutex<usize>>,
 }
@@ -52,7 +52,7 @@ impl RamBackend {
         Self {
             id: TierId::Ram,
             capacity,
-            storage: Arc::new(Mutex::new(HashMap::new())),
+            storage: Arc::new(Mutex::new(BTreeMap::new())),
             next_offset: Arc::new(Mutex::new(0)),
             used: Arc::new(Mutex::new(0)),
         }
@@ -66,7 +66,7 @@ impl RamBackend {
         Self {
             id,
             capacity,
-            storage: Arc::new(Mutex::new(HashMap::new())),
+            storage: Arc::new(Mutex::new(BTreeMap::new())),
             next_offset: Arc::new(Mutex::new(0)),
             used: Arc::new(Mutex::new(0)),
         }

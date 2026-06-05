@@ -4,7 +4,7 @@
 //! full pipeline: compress → transfer → write → verify.
 //! Handles retries with exponential backoff and graceful cancellation.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,7 +26,7 @@ use crate::trace_log::TraceLog;
 #[derive(Debug)]
 pub struct WorkerPool {
     config: WorkerPoolConfig,
-    backends: HashMap<TierId, Arc<dyn StorageBackend>>,
+    backends: BTreeMap<TierId, Arc<dyn StorageBackend>>,
     trace_log: Arc<TraceLog>,
     metrics: Arc<TransferMetrics>,
     active_workers: Arc<AtomicU64>,
@@ -37,7 +37,7 @@ impl WorkerPool {
     /// Create a new worker pool.
     pub fn new(
         config: WorkerPoolConfig,
-        backends: HashMap<TierId, Arc<dyn StorageBackend>>,
+        backends: BTreeMap<TierId, Arc<dyn StorageBackend>>,
         trace_log: Arc<TraceLog>,
         metrics: Arc<TransferMetrics>,
         state_machine: Arc<std::sync::Mutex<ghost_core::state::StateMachine>>,
@@ -186,7 +186,7 @@ impl WorkerPool {
     #[allow(clippy::too_many_arguments)]
     async fn execute_transfer(
         job: &mut TransferJob,
-        backends: &HashMap<TierId, Arc<dyn StorageBackend>>,
+        backends: &BTreeMap<TierId, Arc<dyn StorageBackend>>,
         trace_log: &TraceLog,
         _state_machine: Arc<std::sync::Mutex<ghost_core::state::StateMachine>>,
         max_retries: u32,
@@ -385,8 +385,8 @@ mod tests {
         }
     }
 
-    fn test_backends() -> HashMap<TierId, Arc<dyn StorageBackend>> {
-        let mut backends = HashMap::new();
+    fn test_backends() -> BTreeMap<TierId, Arc<dyn StorageBackend>> {
+        let mut backends = BTreeMap::new();
         backends.insert(
             TierId::Ram,
             Arc::new(RamBackend::with_id(TierId::Ram, 1024 * 1024)) as Arc<dyn StorageBackend>,

@@ -12,7 +12,7 @@ use ghost_policy::pressure::PressureAwarePolicy;
 use ghost_sim::config::SimConfig;
 use ghost_sim::SimBackend;
 use ghost_tier::RamBackend;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -30,8 +30,8 @@ fn default_config() -> OrchestratorConfig {
 }
 
 /// Construct all storage backends for the MVP.
-fn build_backends() -> HashMap<TierId, Arc<dyn StorageBackend>> {
-    let mut backends = HashMap::new();
+fn build_backends() -> BTreeMap<TierId, Arc<dyn StorageBackend>> {
+    let mut backends = BTreeMap::new();
 
     // RAM tier
     let ram: Arc<dyn StorageBackend> = Arc::new(RamBackend::new(4 * 1024 * 1024)); // 4 MiB

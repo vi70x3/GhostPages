@@ -4,7 +4,7 @@
 //! migration status, allocator status, backend health, and replay status.
 //! The snapshot is JSON-serializable for easy consumption by monitoring tools.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -27,7 +27,7 @@ pub struct DiagnosticSnapshot {
     /// Allocator diagnostics.
     pub allocator: AllocatorDiagnostics,
     /// Per-backend health diagnostics.
-    pub backends: HashMap<String, BackendDiagnostics>,
+    pub backends: BTreeMap<String, BackendDiagnostics>,
     /// Replay diagnostics.
     pub replay: ReplayDiagnostics,
     /// Current pressure state.
@@ -169,7 +169,7 @@ impl Default for DiagnosticSnapshot {
             queue: QueueDiagnostics::default(),
             migration: MigrationDiagnostics::default(),
             allocator: AllocatorDiagnostics::default(),
-            backends: HashMap::new(),
+            backends: BTreeMap::new(),
             replay: ReplayDiagnostics::default(),
             pressure: PressureState::new(),
         }
@@ -275,7 +275,7 @@ impl DiagnosticSnapshotBuilder {
             queue: QueueDiagnostics::default(),
             migration: MigrationDiagnostics::default(),
             allocator: AllocatorDiagnostics::default(),
-            backends: HashMap::new(),
+            backends: BTreeMap::new(),
             replay: ReplayDiagnostics::default(),
             pressure: PressureState::new(),
         }

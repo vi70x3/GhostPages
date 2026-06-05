@@ -3,7 +3,7 @@
 //! This module defines the lifecycle states for chunks and the system pressure
 //! model that drives migration decisions.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -158,21 +158,21 @@ impl std::fmt::Display for ChunkState {
 /// transitions must go through this struct to ensure validity.
 #[derive(Debug, Clone)]
 pub struct StateMachine {
-    states: HashMap<ChunkId, ChunkState>,
+    states: BTreeMap<ChunkId, ChunkState>,
 }
 
 impl StateMachine {
     /// Create a new, empty state machine.
     pub fn new() -> Self {
         Self {
-            states: HashMap::new(),
+            states: BTreeMap::new(),
         }
     }
 
     /// Create a new state machine with the given initial capacity.
-    pub fn with_capacity(capacity: usize) -> Self {
+    pub fn with_capacity(_capacity: usize) -> Self {
         Self {
-            states: HashMap::with_capacity(capacity),
+            states: BTreeMap::new(),
         }
     }
 
@@ -238,7 +238,7 @@ impl StateMachine {
     }
 
     /// Get a snapshot of all states (useful for debugging / trace replay).
-    pub fn snapshot(&self) -> HashMap<ChunkId, ChunkState> {
+    pub fn snapshot(&self) -> BTreeMap<ChunkId, ChunkState> {
         self.states.clone()
     }
 }

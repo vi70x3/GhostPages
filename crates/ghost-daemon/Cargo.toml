@@ -27,6 +27,9 @@ parking_lot.workspace = true
 axum.workspace = true
 prometheus.workspace = true
 
+[features]
+deterministic = []
+
 [dev-dependencies]
 tempfile.workspace = true
 tokio-test = "0.4"

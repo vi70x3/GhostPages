@@ -1,5 +1,5 @@
 // Invariant Registry implementation
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 use crate::error::GhostError;
@@ -13,7 +13,7 @@ use crate::daemon::queue::TransferQueue;
 /// Runtime state required by invariants.
 pub struct GhostState<'a> {
     /// Mapping of chunk identifiers to metadata.
-    pub chunks: &'a HashMap<ChunkId, ChunkMeta>,
+    pub chunks: &'a BTreeMap<ChunkId, ChunkMeta>,
     /// Transfer queue reference.
     pub transfer_queue: &'a TransferQueue,
     /// Backend health tracker.

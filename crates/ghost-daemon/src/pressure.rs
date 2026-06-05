@@ -3,7 +3,7 @@
 //! Provides live pressure sampling from all backends, EMA smoothing,
 //! pressure trend detection, and a ring buffer of pressure history.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -47,7 +47,7 @@ pub struct PressureHistoryEntry {
     /// Global aggregated pressure at that time.
     pub global: PressureState,
     /// Per-tier pressure readings.
-    pub per_tier: HashMap<TierId, PressureState>,
+    pub per_tier: BTreeMap<TierId, PressureState>,
 }
 
 /// Ring buffer of pressure history with trend detection.
@@ -240,7 +240,7 @@ impl PressureMonitor {
     /// records history, emits trace events, and logs warnings on spikes.
     pub async fn run(
         &self,
-        backends: HashMap<TierId, Arc<dyn StorageBackend>>,
+        backends: BTreeMap<TierId, Arc<dyn StorageBackend>>,
         mut shutdown_rx: watch::Receiver<bool>,
     ) {
         let mut ticker = interval(Duration::from_millis(self.config.sample_interval_ms));
@@ -265,12 +265,12 @@ impl PressureMonitor {
     /// Sample all backends and update the smoothed pressure state.
     async fn sample_and_update(
         &self,
-        backends: &HashMap<TierId, Arc<dyn StorageBackend>>,
+        backends: &BTreeMap<TierId, Arc<dyn StorageBackend>>,
         alpha: f32,
         spike_threshold: f32,
     ) {
         let timestamp = ghost_core::trace::current_timestamp();
-        let mut per_tier = HashMap::new();
+        let mut per_tier = BTreeMap::new();
         let mut max_mem = 0.0f32;
         let mut max_vram = 0.0f32;
         let mut max_io = 0.0f32;
@@ -423,7 +423,7 @@ mod tests {
                     memory_pressure: i as f32 * 0.1,
                     ..Default::default()
                 },
-                per_tier: HashMap::new(),
+                per_tier: BTreeMap::new(),
             });
         }
 
@@ -445,7 +445,7 @@ mod tests {
                     memory_pressure: i as f32 * 0.1,
                     ..Default::default()
                 },
-                per_tier: HashMap::new(),
+                per_tier: BTreeMap::new(),
             });
         }
 
@@ -469,7 +469,7 @@ mod tests {
                     io_pressure: 0.3,
                     ..Default::default()
                 },
-                per_tier: HashMap::new(),
+                per_tier: BTreeMap::new(),
             });
         }
 
@@ -496,7 +496,7 @@ mod tests {
                     memory_pressure: pressure,
                     ..Default::default()
                 },
-                per_tier: HashMap::new(),
+                per_tier: BTreeMap::new(),
             });
         }
 
@@ -515,7 +515,7 @@ mod tests {
                     memory_pressure: pressure,
                     ..Default::default()
                 },
-                per_tier: HashMap::new(),
+                per_tier: BTreeMap::new(),
             });
         }
 
@@ -533,7 +533,7 @@ mod tests {
                     memory_pressure: 0.5,
                     ..Default::default()
                 },
-                per_tier: HashMap::new(),
+                per_tier: BTreeMap::new(),
             });
         }
 
@@ -551,7 +551,7 @@ mod tests {
                     memory_pressure: 0.5,
                     ..Default::default()
                 },
-                per_tier: HashMap::new(),
+                per_tier: BTreeMap::new(),
             });
         }
 
@@ -593,7 +593,7 @@ mod tests {
         };
         let monitor = PressureMonitor::new(config, 256, trace_log.clone());
 
-        let mut backends: HashMap<TierId, Arc<dyn StorageBackend>> = HashMap::new();
+        let mut backends: BTreeMap<TierId, Arc<dyn StorageBackend>> = BTreeMap::new();
         backends.insert(
             TierId::Ram,
             Arc::new(RamBackend::with_id(TierId::Ram, 1024 * 1024)),
@@ -625,7 +625,7 @@ mod tests {
         };
         let monitor = PressureMonitor::new(config, 256, trace_log);
 
-        let mut backends: HashMap<TierId, Arc<dyn StorageBackend>> = HashMap::new();
+        let mut backends: BTreeMap<TierId, Arc<dyn StorageBackend>> = BTreeMap::new();
         backends.insert(
             TierId::Ram,
             Arc::new(RamBackend::with_id(TierId::Ram, 1024 * 1024)),
@@ -641,7 +641,7 @@ mod tests {
             let (_shutdown_tx, _shutdown_rx) = watch::channel(false);
 
             // Sample manually by calling the monitor's internal method logic
-            let mut per_tier = HashMap::new();
+            let mut per_tier = BTreeMap::new();
             let mut max_mem = 0.0f32;
 
             for (tier_id, backend) in &backends {
@@ -668,7 +668,7 @@ mod tests {
             history.push(PressureHistoryEntry {
                 timestamp: i as u64,
                 global: PressureState::new(),
-                per_tier: HashMap::new(),
+                per_tier: BTreeMap::new(),
             });
         }
 
@@ -699,7 +699,7 @@ mod tests {
             .unwrap();
 
         rt.block_on(async {
-            let mut backends: HashMap<TierId, Arc<dyn StorageBackend>> = HashMap::new();
+            let mut backends: BTreeMap<TierId, Arc<dyn StorageBackend>> = BTreeMap::new();
             backends.insert(
                 TierId::Ram,
                 Arc::new(RamBackend::with_id(TierId::Ram, 1024 * 1024)),

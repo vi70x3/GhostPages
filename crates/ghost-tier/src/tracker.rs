@@ -20,7 +20,7 @@
 //! ```
 
 use ghost_core::types::ChunkId;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -45,7 +45,7 @@ pub struct AllocationInfo {
 /// operations and never across `.await` points.
 #[derive(Debug)]
 pub struct AllocationTracker {
-    allocations: parking_lot::Mutex<HashMap<ChunkId, AllocationInfo>>,
+    allocations: parking_lot::Mutex<BTreeMap<ChunkId, AllocationInfo>>,
     total_allocated: AtomicU64,
     total_freed: AtomicU64,
     peak_usage: AtomicU64,
@@ -55,7 +55,7 @@ impl AllocationTracker {
     /// Create a new allocation tracker.
     pub fn new() -> Self {
         Self {
-            allocations: parking_lot::Mutex::new(HashMap::new()),
+            allocations: parking_lot::Mutex::new(BTreeMap::new()),
             total_allocated: AtomicU64::new(0),
             total_freed: AtomicU64::new(0),
             peak_usage: AtomicU64::new(0),

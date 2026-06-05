@@ -3,7 +3,7 @@
 //! Tests the full migration pipeline: hotness tracking → pressure evaluation →
 //! migration candidate selection → backpressure gating → job submission.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use ghost_core::hotness::ChunkHotness;
@@ -26,8 +26,8 @@ use ghost_daemon::trace_log::TraceLog;
 
 // ─── Test Helpers ──────────────────────────────────────────────────────────────
 
-fn test_backends() -> HashMap<TierId, Arc<dyn StorageBackend>> {
-    let mut backends = HashMap::new();
+fn test_backends() -> BTreeMap<TierId, Arc<dyn StorageBackend>> {
+    let mut backends = BTreeMap::new();
     backends.insert(
         TierId::Ram,
         Arc::new(RamBackend::new(1024 * 1024)) as Arc<dyn StorageBackend>,
@@ -95,6 +95,7 @@ fn test_orchestrator_config() -> OrchestratorConfig {
         pressure_history_size: 256,
         enable_auto_migration: true,
         deterministic_mode: false,
+        rng_seed: Some(42),
     }
 }
 
@@ -649,7 +650,7 @@ fn test_orchestrator_backpressure_controller_wired() {
 #[test]
 fn test_deterministic_migration_with_sim_backend() {
     // Use SimBackend for deterministic testing
-    let mut backends = HashMap::new();
+    let mut backends = BTreeMap::new();
     backends.insert(
         TierId::Ram,
         Arc::new(SimBackend::new(SimConfig::default())) as Arc<dyn StorageBackend>,

@@ -3,7 +3,7 @@
 //! Monitors storage backend health, tracks failure counts, and determines
 //! when backends are degraded, unavailable, or recovering.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -70,10 +70,10 @@ impl Default for HealthConfig {
 /// Tracks health status for all registered storage backends.
 #[derive(Debug)]
 pub struct HealthTracker {
-    states: HashMap<TierId, BackendHealth>,
-    failure_counts: HashMap<TierId, AtomicU64>,
-    last_failure: HashMap<TierId, Instant>,
-    recovery_successes: HashMap<TierId, AtomicU64>,
+    states: BTreeMap<TierId, BackendHealth>,
+    failure_counts: BTreeMap<TierId, AtomicU64>,
+    last_failure: BTreeMap<TierId, Instant>,
+    recovery_successes: BTreeMap<TierId, AtomicU64>,
     config: HealthConfig,
 }
 
@@ -81,10 +81,10 @@ impl HealthTracker {
     /// Create a new health tracker with the given configuration.
     pub fn new(config: HealthConfig) -> Self {
         Self {
-            states: HashMap::new(),
-            failure_counts: HashMap::new(),
-            last_failure: HashMap::new(),
-            recovery_successes: HashMap::new(),
+            states: BTreeMap::new(),
+            failure_counts: BTreeMap::new(),
+            last_failure: BTreeMap::new(),
+            recovery_successes: BTreeMap::new(),
             config,
         }
     }
@@ -199,7 +199,7 @@ impl HealthTracker {
     }
 
     /// Get all backend health states.
-    pub fn all_states(&self) -> &HashMap<TierId, BackendHealth> {
+    pub fn all_states(&self) -> &BTreeMap<TierId, BackendHealth> {
         &self.states
     }
 

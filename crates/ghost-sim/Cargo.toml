@@ -23,5 +23,8 @@ bytes.workspace = true
 parking_lot.workspace = true
 hex.workspace = true
 
+[features]
+deterministic = []
+
 [dev-dependencies]
 tokio.workspace = true

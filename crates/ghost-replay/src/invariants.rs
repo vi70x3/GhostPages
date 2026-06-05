@@ -3,7 +3,7 @@
 //! Provides a trait-based invariant framework with built-in validators
 //! for common replay correctness properties.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fmt;
 
 use ghost_core::state::ChunkState;
@@ -142,8 +142,8 @@ impl ReplayInvariant for NoOrphanedTransfers {
 
     fn validate(&self, events: &[TraceEvent]) -> Vec<InvariantViolation> {
         let mut violations = Vec::new();
-        let mut started: HashMap<ChunkId, usize> = HashMap::new();
-        let mut completed: HashMap<ChunkId, bool> = HashMap::new();
+        let mut started: BTreeMap<ChunkId, usize> = BTreeMap::new();
+        let mut completed: BTreeMap<ChunkId, bool> = BTreeMap::new();
 
         for (i, event) in events.iter().enumerate() {
             match event {
@@ -192,7 +192,7 @@ impl ReplayInvariant for NoIllegalTransitions {
 
     fn validate(&self, events: &[TraceEvent]) -> Vec<InvariantViolation> {
         let mut violations = Vec::new();
-        let mut last_state: HashMap<ChunkId, ChunkState> = HashMap::new();
+        let mut last_state: BTreeMap<ChunkId, ChunkState> = BTreeMap::new();
 
         for (i, event) in events.iter().enumerate() {
             if let TraceEvent::ChunkStateChanged {
@@ -256,8 +256,8 @@ impl ReplayInvariant for NoDanglingAllocations {
 
     fn validate(&self, events: &[TraceEvent]) -> Vec<InvariantViolation> {
         let mut violations = Vec::new();
-        let mut created: HashMap<ChunkId, bool> = HashMap::new();
-        let mut deleted: HashMap<ChunkId, bool> = HashMap::new();
+        let mut created: BTreeMap<ChunkId, bool> = BTreeMap::new();
+        let mut deleted: BTreeMap<ChunkId, bool> = BTreeMap::new();
 
         for (_i, event) in events.iter().enumerate() {
             match event {
@@ -336,7 +336,7 @@ impl ReplayInvariant for NoMissingCompletions {
 
     fn validate(&self, events: &[TraceEvent]) -> Vec<InvariantViolation> {
         let mut violations = Vec::new();
-        let mut pending: HashMap<ChunkId, usize> = HashMap::new();
+        let mut pending: BTreeMap<ChunkId, usize> = BTreeMap::new();
 
         for (i, event) in events.iter().enumerate() {
             match event {
@@ -384,7 +384,7 @@ impl ReplayInvariant for StateMachineConsistency {
 
     fn validate(&self, events: &[TraceEvent]) -> Vec<InvariantViolation> {
         let mut violations = Vec::new();
-        let mut chunk_states: HashMap<ChunkId, ChunkState> = HashMap::new();
+        let mut chunk_states: BTreeMap<ChunkId, ChunkState> = BTreeMap::new();
 
         for (i, event) in events.iter().enumerate() {
             match event {

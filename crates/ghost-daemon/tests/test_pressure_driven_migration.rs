@@ -12,12 +12,12 @@ use ghost_policy::pressure::PressureAwarePolicy;
 use ghost_sim::config::SimConfig;
 use ghost_sim::SimBackend;
 use ghost_tier::RamBackend;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-fn test_backends() -> HashMap<TierId, Arc<dyn ghost_tier::backend::StorageBackend>> {
-    let mut backends: HashMap<TierId, Arc<dyn ghost_tier::backend::StorageBackend>> =
-        HashMap::new();
+fn test_backends() -> BTreeMap<TierId, Arc<dyn ghost_tier::backend::StorageBackend>> {
+    let mut backends: BTreeMap<TierId, Arc<dyn ghost_tier::backend::StorageBackend>> =
+        BTreeMap::new();
     // Small RAM tier to create pressure quickly
     backends.insert(
         TierId::Ram,

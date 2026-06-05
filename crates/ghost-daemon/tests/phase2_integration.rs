@@ -7,7 +7,7 @@
 //! - Autonomous migration (ghost-daemon)
 //! - Observability (ghost-metrics, ghost-daemon)
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use ghost_core::state::PressureState;
@@ -31,8 +31,8 @@ use ghost_tier::backend::StorageBackend;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-fn test_backends() -> HashMap<TierId, Arc<dyn StorageBackend>> {
-    let mut backends: HashMap<TierId, Arc<dyn StorageBackend>> = HashMap::new();
+fn test_backends() -> BTreeMap<TierId, Arc<dyn StorageBackend>> {
+    let mut backends: BTreeMap<TierId, Arc<dyn StorageBackend>> = BTreeMap::new();
     backends.insert(
         TierId::Ram,
         Arc::new(RamBackend::new(4 * 1024 * 1024)) as Arc<dyn StorageBackend>,

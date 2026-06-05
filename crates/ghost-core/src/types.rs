@@ -11,7 +11,7 @@ use std::fmt;
 /// - **Uniqueness**: Different data produces different IDs (with overwhelming probability)
 /// - **Integrity**: ID verification detects data corruption
 /// - **Deduplication**: Identical data produces identical IDs
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ChunkId(pub [u8; 32]);
 
 impl ChunkId {
@@ -72,7 +72,7 @@ impl fmt::Display for ChunkId {
 ///
 /// Represents the different storage tiers available in the system,
 /// ordered from hottest (fastest) to coldest (slowest).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum TierId {
     /// System RAM (hot tier, fastest access).
     Ram,

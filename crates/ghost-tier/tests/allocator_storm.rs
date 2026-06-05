@@ -9,7 +9,7 @@ use ghost_tier::{RamBackend, StorageBackend};
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Capacity for storm tests — large enough for many small allocations.
 const CAPACITY: usize = 1024 * 1024; // 1 MB
@@ -31,7 +31,7 @@ async fn test_alloc_free_storm() {
     let mut rng = ChaCha8Rng::seed_from_u64(SEED);
 
     // Track live allocations: offset -> size
-    let mut live: HashMap<usize, usize> = HashMap::new();
+    let mut live: BTreeMap<usize, usize> = BTreeMap::new();
     let mut total_allocated: usize = 0;
 
     for i in 0..1000 {

@@ -16,6 +16,7 @@
 pub mod error;
 pub mod hotness;
 pub mod state;
+pub mod time;
 pub mod trace;
 pub mod transfer;
 pub mod types;
@@ -23,6 +24,7 @@ pub mod types;
 // Re-export commonly used types
 pub use error::{GhostError, GhostResult};
 pub use state::{ChunkState, PressureState, StateMachine};
+pub use time::{DeterministicClock, RealTimeProvider, TimeProvider};
 pub use trace::{EvictionReason, TraceEvent};
 pub use transfer::{TransferJob, TransferPriority, TransferState};
 pub use types::{ChunkId, ChunkMeta, CompressionAlgorithm, TierId};

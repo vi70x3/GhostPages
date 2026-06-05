@@ -49,6 +49,10 @@ pub struct OrchestratorConfig {
     pub enable_auto_migration: bool,
     /// Enable deterministic mode for replay equivalence. When true, the orchestrator will use a fixed RNG seed and deterministic timestamps.
     pub deterministic_mode: bool,
+
+    /// RNG seed for deterministic random number generation. When set, the orchestrator
+    /// creates a ChaCha8Rng seeded with this value and passes it to components that need randomness.
+    pub rng_seed: Option<u64>,
 }
 
 impl Default for OrchestratorConfig {
@@ -68,6 +72,7 @@ impl Default for OrchestratorConfig {
             pressure_history_size: 256,
             enable_auto_migration: true,
             deterministic_mode: false,
+            rng_seed: Some(42),
         }
     }
 }

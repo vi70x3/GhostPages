@@ -11,7 +11,7 @@ use ghost_tier::StorageBackend;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -48,7 +48,7 @@ async fn test_high_failure_rate_stress() {
     let mut _failed_allocs = 0;
     let mut _successful_writes = 0;
     let mut _failed_writes = 0;
-    let mut live_allocs: HashMap<usize, Vec<u8>> = HashMap::new();
+    let mut live_allocs: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
 
     for _ in 0..500 {
         let size = rng.gen_range(64..=4096);

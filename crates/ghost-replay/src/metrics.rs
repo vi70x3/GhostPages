@@ -3,7 +3,7 @@
 //! Provides metrics collection during replay and comparison between
 //! different placement policies.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use ghost_core::trace::TraceEvent;
 use ghost_core::types::{ChunkId, TierId};
@@ -32,7 +32,7 @@ pub struct ReplayMetrics {
     /// Total evictions.
     pub evictions: u64,
     /// Evictions broken down by reason.
-    pub evictions_by_reason: HashMap<String, u64>,
+    pub evictions_by_reason: BTreeMap<String, u64>,
     /// Total pressure alerts.
     pub pressure_alerts: u64,
     /// Peak memory pressure observed.
@@ -48,7 +48,7 @@ pub struct ReplayMetrics {
     /// Unique chunks touched.
     pub unique_chunks: u64,
     /// Tier distribution: tier_id -> chunk count.
-    pub tier_distribution: HashMap<TierId, u64>,
+    pub tier_distribution: BTreeMap<TierId, u64>,
     /// Average chunk lifetime in events.
     pub avg_chunk_lifetime_events: f64,
     /// Time range (first_ts, last_ts).
@@ -64,10 +64,10 @@ impl ReplayMetrics {
     /// Collect metrics from a slice of trace events.
     pub fn from_events(events: &[TraceEvent]) -> Self {
         let mut metrics = Self::new();
-        let mut chunk_create_events: HashMap<ChunkId, u64> = HashMap::new();
-        let mut chunk_delete_events: HashMap<ChunkId, u64> = HashMap::new();
-        let mut chunk_transition_counts: HashMap<ChunkId, u64> = HashMap::new();
-        let mut tier_counts: HashMap<TierId, u64> = HashMap::new();
+        let mut chunk_create_events: BTreeMap<ChunkId, u64> = BTreeMap::new();
+        let mut chunk_delete_events: BTreeMap<ChunkId, u64> = BTreeMap::new();
+        let mut chunk_transition_counts: BTreeMap<ChunkId, u64> = BTreeMap::new();
+        let mut tier_counts: BTreeMap<TierId, u64> = BTreeMap::new();
 
         metrics.total_events = events.len() as u64;
 
@@ -175,7 +175,7 @@ pub struct PolicyComparison {
     /// Which policy "won" overall.
     pub winner: ComparisonWinner,
     /// Per-metric deltas (candidate - baseline).
-    pub deltas: HashMap<String, f64>,
+    pub deltas: BTreeMap<String, f64>,
     /// Human-readable summary.
     pub summary: String,
 }
@@ -214,7 +214,7 @@ pub fn compare_traces(
     let baseline_metrics = ReplayMetrics::from_events(baseline_events);
     let candidate_metrics = ReplayMetrics::from_events(candidate_events);
 
-    let mut deltas = HashMap::new();
+    let mut deltas = BTreeMap::new();
 
     // Compute deltas (positive = candidate is better for "lower is better" metrics)
     deltas.insert(

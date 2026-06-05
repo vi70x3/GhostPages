@@ -8,16 +8,22 @@
 //! # Example
 //!
 //! ```
+//! use std::future::Future;
+//! use std::pin::Pin;
+//!
 //! use ghost_core::event_multiplexer::{EventMultiplexer, EventHandler};
 //! use ghost_core::events::Event;
 //!
 //! struct PrintHandler;
 //!
-//! #[async_trait::async_trait]
 //! impl EventHandler for PrintHandler {
-//!     async fn handle(&self, event: &Event) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//!     fn handle(
+//!         &self,
+//!         event: &Event,
+//!     ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + '_>>
+//!     {
 //!         println!("Event: {}", event.event_name());
-//!         Ok(())
+//!         Box::pin(async { Ok(()) })
 //!     }
 //! }
 //! ```
@@ -121,7 +127,9 @@ impl EventHandler for NoopHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{ChunkId, TierId};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     struct CountingHandler {
         counter: Arc<AtomicUsize>,

@@ -249,6 +249,7 @@ impl EventHandler for TracingHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{ChunkId, TierId};
 
     #[tokio::test]
     async fn test_tracing_handler_no_error() {

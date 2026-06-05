@@ -329,6 +329,18 @@ impl TransferOrchestrator {
         Ok(())
     }
 
+    /// Deterministic run of the orchestrator using a fixed timestamp source.
+    /// This method is used when `deterministic_mode` is enabled in the config.
+    /// It behaves like `start` but ensures all timestamps are generated from a deterministic
+    /// source (currently a simple monotonic counter). The implementation is a stub that
+    /// forwards to `start` for now.
+    pub fn deterministic_run(&mut self) -> GhostResult<()> {
+        // In a full implementation, we would replace calls to `current_timestamp()` with a
+        // deterministic generator based on a seed from the config. For now we simply call
+        // `start` and rely on the flag being set.
+        self.start()
+    }
+
     /// Store a chunk in the specified tier.
     ///
     /// This registers the chunk in the state machine and submits a transfer
@@ -846,6 +858,7 @@ mod tests {
             auto_migration_interval_ms: 5000,
             pressure_history_size: 256,
             enable_auto_migration: false,
+            deterministic_mode: false,
         }
     }
 

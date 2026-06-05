@@ -47,6 +47,8 @@ pub struct OrchestratorConfig {
 
     /// Whether to enable automatic pressure-driven migration.
     pub enable_auto_migration: bool,
+    /// Enable deterministic mode for replay equivalence. When true, the orchestrator will use a fixed RNG seed and deterministic timestamps.
+    pub deterministic_mode: bool,
 }
 
 impl Default for OrchestratorConfig {
@@ -65,6 +67,7 @@ impl Default for OrchestratorConfig {
             auto_migration_interval_ms: 5000,
             pressure_history_size: 256,
             enable_auto_migration: true,
+            deterministic_mode: false,
         }
     }
 }

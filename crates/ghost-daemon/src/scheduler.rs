@@ -25,13 +25,10 @@ use crate::trace_log::TraceLog;
 /// The transfer scheduler dequeues jobs and dispatches them to workers.
 pub struct TransferScheduler {
     queue: Arc<TransferQueue>,
-    #[expect(dead_code)]
     policy: Arc<dyn PlacementPolicy>,
     // State machine is accessed via the orchestrator; scheduler no longer validates transitions.
-    #[expect(dead_code)]
     state_machine: Arc<std::sync::Mutex<StateMachine>>,
     trace_log: Arc<TraceLog>,
-    #[expect(dead_code)]
     config: SchedulerConfig,
     metrics: Arc<TransferMetrics>,
     pressure_rx: watch::Receiver<PressureState>,

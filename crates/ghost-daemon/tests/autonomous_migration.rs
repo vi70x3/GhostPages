@@ -94,6 +94,7 @@ fn test_orchestrator_config() -> OrchestratorConfig {
         auto_migration_interval_ms: 5000,
         pressure_history_size: 256,
         enable_auto_migration: true,
+        deterministic_mode: false,
     }
 }
 

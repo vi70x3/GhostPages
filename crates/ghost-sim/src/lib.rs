@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use config::SimConfig;
 use ghost_core::error::GhostError;
-use ghost_core::state::{ChunkState, PressureState, StateMachine};
+use ghost_core::state::{ChunkState, PressureState};
 use ghost_core::types::ChunkId;
 use ghost_core::types::TierId;
 use ghost_tier::backend::{Allocation, BackendData, BackendError, StorageBackend};
@@ -49,8 +49,8 @@ pub struct SimBackend {
     rng: Mutex<ChaCha8Rng>,
     /// Metrics.
     metrics: Arc<SimMetrics>,
-    /// State machine for tracking chunk states.
-    state_machine: Mutex<StateMachine>,
+    /// Simple state map for simulation (replaces full state machine).
+    state_map: Mutex<HashMap<ChunkId, ChunkState>>,
     /// Set of allocated offsets (tracks all allocations, even before write).
     allocated_offsets: Mutex<HashSet<usize>>,
     /// Time the backend was created.
@@ -68,7 +68,7 @@ impl SimBackend {
             used: AtomicU64::new(0),
             rng: Mutex::new(rng),
             metrics: Arc::new(SimMetrics::new()),
-            state_machine: Mutex::new(StateMachine::new()),
+            state_map: Mutex::new(HashMap::new()),
             allocated_offsets: Mutex::new(HashSet::new()),
             created_at: Instant::now(),
         }
@@ -403,7 +403,8 @@ impl StorageBackend for SimBackend {
 impl SimBackend {
     /// Register a chunk with the state machine.
     pub fn register_chunk(&self, chunk_id: ChunkId) -> Result<(), GhostError> {
-        self.state_machine.lock().register(chunk_id)
+        self.state_map.lock().insert(chunk_id, ChunkState::Allocated);
+        Ok(())
     }
 
     /// Transition a chunk to a new state.
@@ -412,17 +413,27 @@ impl SimBackend {
         chunk_id: &ChunkId,
         next: ChunkState,
     ) -> Result<ChunkState, GhostError> {
-        self.state_machine.lock().transition(chunk_id, next)
+        let mut map = self.state_map.lock();
+        match map.get_mut(chunk_id) {
+            Some(state) => {
+                *state = next.clone();
+                Ok(next)
+            }
+            None => Err(GhostError::ChunkNotFound(format!("{:?}", chunk_id))),
+        }
     }
 
     /// Get the current state of a chunk.
     pub fn chunk_state(&self, chunk_id: &ChunkId) -> Option<ChunkState> {
-        self.state_machine.lock().get_state(chunk_id)
+        self.state_map.lock().get(chunk_id).cloned()
     }
 
     /// Get all chunks in a given state.
     pub fn chunks_in_state(&self, state: ChunkState) -> Vec<ChunkId> {
-        self.state_machine.lock().chunks_in_state(state)
+        self.state_map.lock()
+            .iter()
+            .filter_map(|(id, s)| if *s == state { Some(id.clone()) } else { None })
+            .collect()
     }
 }
 

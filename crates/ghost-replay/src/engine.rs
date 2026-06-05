@@ -90,9 +90,7 @@ pub struct ReplaySummary {
 #[derive(Debug, Clone)]
 pub struct ChunkReplayState {
     current_state: ChunkState,
-    #[expect(dead_code)]
     current_tier: Option<TierId>,
-    #[expect(dead_code)]
     created: bool,
 }
 

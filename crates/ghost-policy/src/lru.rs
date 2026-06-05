@@ -25,6 +25,9 @@ pub struct LruConfig {
 
     /// Tier to use when preferred tier is under pressure.
     pub fallback_tier: TierId,
+
+    /// Current timestamp in seconds, injected by the caller for deterministic behavior.
+    pub current_time_secs: u64,
 }
 
 impl Default for LruConfig {
@@ -34,6 +37,7 @@ impl Default for LruConfig {
             min_residence_secs: 60,      // 1 minute
             preferred_tier: TierId::Ram,
             fallback_tier: TierId::Disk,
+            current_time_secs: 0,
         }
     }
 }
@@ -66,20 +70,28 @@ impl LruPolicy {
 
     /// Check if a chunk is "hot" (recently accessed).
     fn is_hot(&self, meta: &ChunkMeta) -> bool {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = if self.config.current_time_secs != 0 {
+            self.config.current_time_secs
+        } else {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        };
         let age = now.saturating_sub(meta.last_accessed);
         age < self.config.hotness_threshold_secs
     }
 
     /// Check if a chunk has been resident long enough to be evictable.
     fn is_resident(&self, meta: &ChunkMeta) -> bool {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = if self.config.current_time_secs != 0 {
+            self.config.current_time_secs
+        } else {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        };
         let age = now.saturating_sub(meta.created_at);
         age >= self.config.min_residence_secs
     }

@@ -45,6 +45,8 @@ pub struct TraceWriter {
     header: TraceFileHeader,
     record_count: u64,
     hasher: Hasher,
+    /// Current timestamp in seconds, injected by the caller for deterministic behavior.
+    current_time_secs: u64,
 }
 
 impl TraceWriter {
@@ -60,16 +62,17 @@ impl TraceWriter {
             ))
         })?;
         let mut writer = BufWriter::new(file);
-
+    
         // Write a placeholder header (will be updated on close)
         let header = TraceFileHeader::new(flags, 0, 0, 0);
         header.write_to(&mut writer)?;
-
+    
         Ok(Self {
             writer,
             header,
             record_count: 0,
             hasher: Hasher::new(),
+            current_time_secs: 0,
         })
     }
 
@@ -129,10 +132,7 @@ impl TraceWriter {
             ghost_core::error::GhostError::ReplayError(format!("failed to seek to start: {}", e))
         })?;
 
-        let created_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+        let created_at = self.current_time_secs;
 
         let final_header = TraceFileHeader::new(
             self.header.flags,

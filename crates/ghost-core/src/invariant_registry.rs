@@ -1,7 +1,10 @@
 // Invariant Registry implementation
+//!
+//! The `InvariantRegistry` is owned and populated by ghost-daemon at startup.
+//! No global mutable state lives in ghost-core; the daemon is the sole
+//! orchestrator and therefore the sole owner of mutable state.
+
 use std::collections::BTreeMap;
-use std::sync::Mutex;
-use once_cell::sync::Lazy;
 use crate::error::GhostError;
 use crate::error::GhostResult;
 use crate::state::{ChunkState, PressureState};
@@ -56,26 +59,7 @@ impl InvariantRegistry {
     pub fn check_all(&self, _state: &GhostState) -> Result<(), GhostError> { Ok(()) }
 }
 
-// Global static registry
-#[cfg(feature = "runtime-invariants")]
-pub static REGISTRY: Lazy<Mutex<InvariantRegistry>> = Lazy::new(|| Mutex::new(InvariantRegistry::new()));
-
-#[cfg(not(feature = "runtime-invariants"))]
-pub static REGISTRY: () = ();
-
-// Macro for compile‑time registration
-#[macro_export]
-macro_rules! register_invariant {
-    ($fn_name:ident) => {
-        #[cfg(feature = "runtime-invariants")]
-        #[ctor::ctor]
-        fn register() {
-            crate::invariant_registry::REGISTRY.lock().unwrap().register($fn_name);
-        }
-    };
-}
-
-// Six invariant stubs
+// Six invariant stubs — ghost-daemon registers these at startup.
 pub fn no_orphaned_transfers(state: &GhostState) -> Result<(), GhostError> {
     // Simple check: ensure each job's chunk_id exists in chunks map.
     // TransferQueue does not expose jobs publicly; skip detailed check.
@@ -97,11 +81,3 @@ pub fn no_missing_completions(state: &GhostState) -> Result<(), GhostError> {
 pub fn state_machine_consistency(state: &GhostState) -> Result<(), GhostError> {
     Ok(())
 }
-
-// Register all invariants
-register_invariant!(no_orphaned_transfers);
-register_invariant!(no_illegal_transitions);
-register_invariant!(no_dangling_allocations);
-register_invariant!(no_timestamp_regression);
-register_invariant!(no_missing_completions);
-register_invariant!(state_machine_consistency);

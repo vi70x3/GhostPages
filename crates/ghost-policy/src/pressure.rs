@@ -39,6 +39,9 @@ pub struct PressureAwareConfig {
 
     /// Pressure threshold for normal migration priority.
     pub normal_pressure: f32,
+
+    /// Current timestamp in seconds, injected by the caller for deterministic behavior.
+    pub current_time_secs: u64,
 }
 
 impl Default for PressureAwareConfig {
@@ -53,6 +56,7 @@ impl Default for PressureAwareConfig {
             critical_pressure: 0.9,
             high_pressure: 0.7,
             normal_pressure: 0.5,
+            current_time_secs: 0,
         }
     }
 }
@@ -216,10 +220,7 @@ impl PlacementPolicy for PressureAwarePolicy {
 
         // If the current tier is under high pressure and the chunk is cold, migrate
         if self.is_tier_pressured(current_tier, pressure) {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
+            let now = self.config.current_time_secs;
             let age = now.saturating_sub(meta.last_accessed);
             if age > 300 {
                 // Cold chunk on pressured tier — migrate to a better tier

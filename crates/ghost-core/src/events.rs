@@ -15,6 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::io_events::{IoEvent, IoOperation};
 use crate::state::PressureState;
 use crate::types::{ChunkId, TierId};
 
@@ -239,6 +240,49 @@ pub enum Event {
         details: String,
         severity: InvariantSeverity,
     },
+
+    // ── I/O ────────────────────────────────────────────────────────────────────
+
+    /// An I/O request was issued to a tier.
+    IoRequestIssued {
+        operation: IoOperation,
+        chunk_id: ChunkId,
+        tier: TierId,
+    },
+
+    /// An I/O request completed successfully.
+    IoRequestCompleted {
+        operation: IoOperation,
+        chunk_id: ChunkId,
+        tier: TierId,
+        duration_ticks: u64,
+    },
+
+    /// An I/O request failed.
+    IoRequestFailed {
+        operation: IoOperation,
+        chunk_id: ChunkId,
+        tier: TierId,
+        error: String,
+    },
+
+    /// A flush (fsync) was issued for a tier.
+    IoFlushIssued {
+        tier: TierId,
+    },
+
+    /// A flush (fsync) completed for a tier.
+    IoFlushCompleted {
+        tier: TierId,
+        duration_ticks: u64,
+    },
+
+    /// The buffer fill level changed for a tier.
+    IoBufferStateChange {
+        tier: TierId,
+        buffered: usize,
+        capacity: usize,
+    },
 }
 
 impl Event {
@@ -253,6 +297,9 @@ impl Event {
             Event::MigrationFailed { chunk_id, .. } => Some(*chunk_id),
             Event::MigrationRolledBack { chunk_id, .. } => Some(*chunk_id),
             Event::RetryAttempted { chunk_id, .. } => Some(*chunk_id),
+            Event::IoRequestIssued { chunk_id, .. } => Some(*chunk_id),
+            Event::IoRequestCompleted { chunk_id, .. } => Some(*chunk_id),
+            Event::IoRequestFailed { chunk_id, .. } => Some(*chunk_id),
             _ => None,
         }
     }
@@ -270,6 +317,12 @@ impl Event {
             Event::BackpressureActivated { tier, .. } => Some(*tier),
             Event::BackpressureDeactivated { tier, .. } => Some(*tier),
             Event::BackendHealthChanged { tier, .. } => Some(*tier),
+            Event::IoRequestIssued { tier, .. } => Some(*tier),
+            Event::IoRequestCompleted { tier, .. } => Some(*tier),
+            Event::IoRequestFailed { tier, .. } => Some(*tier),
+            Event::IoFlushIssued { tier, .. } => Some(*tier),
+            Event::IoFlushCompleted { tier, .. } => Some(*tier),
+            Event::IoBufferStateChange { tier, .. } => Some(*tier),
             _ => None,
         }
     }
@@ -300,6 +353,13 @@ impl Event {
             | Event::OperationFailed { .. } => "failure",
 
             Event::InvariantViolation { .. } => "invariant_violation",
+
+            Event::IoRequestIssued { .. }
+            | Event::IoRequestCompleted { .. }
+            | Event::IoRequestFailed { .. }
+            | Event::IoFlushIssued { .. }
+            | Event::IoFlushCompleted { .. }
+            | Event::IoBufferStateChange { .. } => "io",
         }
     }
 
@@ -324,6 +384,12 @@ impl Event {
             Event::RetryAttempted { .. } => "retry_attempted",
             Event::OperationFailed { .. } => "operation_failed",
             Event::InvariantViolation { .. } => "invariant_violation",
+            Event::IoRequestIssued { .. } => "io_request_issued",
+            Event::IoRequestCompleted { .. } => "io_request_completed",
+            Event::IoRequestFailed { .. } => "io_request_failed",
+            Event::IoFlushIssued { .. } => "io_flush_issued",
+            Event::IoFlushCompleted { .. } => "io_flush_completed",
+            Event::IoBufferStateChange { .. } => "io_buffer_state_change",
         }
     }
 }

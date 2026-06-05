@@ -237,6 +237,71 @@ impl EventHandler for TracingHandler {
                         "Invariant violation"
                     );
                 }
+                Event::IoRequestIssued {
+                    operation,
+                    chunk_id,
+                    tier,
+                } => {
+                    tracing::info!(
+                        chunk_id = %chunk_id,
+                        tier = ?tier,
+                        operation = ?operation,
+                        "I/O request issued"
+                    );
+                }
+                Event::IoRequestCompleted {
+                    operation,
+                    chunk_id,
+                    tier,
+                    duration_ticks,
+                } => {
+                    tracing::info!(
+                        chunk_id = %chunk_id,
+                        tier = ?tier,
+                        operation = ?operation,
+                        duration_ticks,
+                        "I/O request completed"
+                    );
+                }
+                Event::IoRequestFailed {
+                    operation,
+                    chunk_id,
+                    tier,
+                    error,
+                } => {
+                    tracing::error!(
+                        chunk_id = %chunk_id,
+                        tier = ?tier,
+                        operation = ?operation,
+                        error,
+                        "I/O request failed"
+                    );
+                }
+                Event::IoFlushIssued { tier } => {
+                    tracing::info!(tier = ?tier, "I/O flush issued");
+                }
+                Event::IoFlushCompleted {
+                    tier,
+                    duration_ticks,
+                } => {
+                    tracing::info!(
+                        tier = ?tier,
+                        duration_ticks,
+                        "I/O flush completed"
+                    );
+                }
+                Event::IoBufferStateChange {
+                    tier,
+                    buffered,
+                    capacity,
+                } => {
+                    tracing::debug!(
+                        tier = ?tier,
+                        buffered,
+                        capacity,
+                        "I/O buffer state changed"
+                    );
+                }
             }
 
             Ok(())

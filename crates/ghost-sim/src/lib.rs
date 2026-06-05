@@ -15,8 +15,11 @@ pub mod metrics;
 use async_trait::async_trait;
 use bytes::Bytes;
 use config::SimConfig;
+use ghost_core::emitter::EventEmitter;
 use ghost_core::error::GhostError;
+use ghost_core::io_abstraction::{IoOperation, IoScheduler};
 use ghost_core::state::{ChunkState, PressureState};
+use ghost_core::time::RealTimeProvider;
 use ghost_core::types::ChunkId;
 use ghost_core::types::TierId;
 use ghost_tier::backend::{Allocation, BackendData, BackendError, StorageBackend};
@@ -55,12 +58,19 @@ pub struct SimBackend {
     allocated_offsets: Mutex<BTreeSet<usize>>,
     /// Time the backend was created.
     created_at: Instant,
+    /// I/O scheduler for deterministic issue/complete separation.
+    io_scheduler: Mutex<IoScheduler>,
 }
 
 impl SimBackend {
     /// Create a new simulation backend with the given configuration.
     pub fn new(config: SimConfig) -> Self {
         let rng = ChaCha8Rng::seed_from_u64(config.seed);
+        let (event_sender, _event_receiver) = tokio::sync::mpsc::channel(1024);
+        let io_scheduler = IoScheduler::new(
+            Arc::new(RealTimeProvider::default()),
+            EventEmitter::new(event_sender),
+        );
         Self {
             config,
             storage: Mutex::new(BTreeMap::new()),
@@ -71,6 +81,7 @@ impl SimBackend {
             state_map: Mutex::new(BTreeMap::new()),
             allocated_offsets: Mutex::new(BTreeSet::new()),
             created_at: Instant::now(),
+            io_scheduler: Mutex::new(io_scheduler),
         }
     }
 
@@ -273,6 +284,16 @@ impl StorageBackend for SimBackend {
             )));
         }
 
+        // Derive a deterministic ChunkId from the allocation offset for I/O tracking.
+        let chunk_id = ChunkId::from_data(format!("offset-{}", allocation.offset).as_bytes());
+
+        // Issue the I/O request before latency simulation
+        let req_id = self.io_scheduler.lock().issue(
+            IoOperation::Write,
+            chunk_id,
+            TierId::Simulation,
+        );
+
         // Simulate latency proportional to data size
         self.simulate_latency(data.len()).await;
 
@@ -285,6 +306,9 @@ impl StorageBackend for SimBackend {
                 let corrupted: Bytes = vec![0xFFu8; data.len()].into();
                 storage.insert(allocation.offset, corrupted);
             }
+            self.io_scheduler
+                .lock()
+                .complete(req_id, Err("simulated write failure".to_string()));
             return Err(BackendError::WriteFailed(
                 "simulated write failure".to_string(),
             ));
@@ -292,6 +316,11 @@ impl StorageBackend for SimBackend {
 
         let mut storage = self.storage.lock();
         storage.insert(allocation.offset, Bytes::copy_from_slice(data));
+
+        // Complete the I/O request after the write succeeds
+        self.io_scheduler
+            .lock()
+            .complete(req_id, Ok(()));
 
         self.metrics.record_write(data.len());
 
@@ -315,12 +344,25 @@ impl StorageBackend for SimBackend {
             )));
         }
 
+        // Derive a deterministic ChunkId from the allocation offset for I/O tracking.
+        let chunk_id = ChunkId::from_data(format!("offset-{}", allocation.offset).as_bytes());
+
+        // Issue the I/O request before latency simulation
+        let req_id = self.io_scheduler.lock().issue(
+            IoOperation::Read,
+            chunk_id,
+            TierId::Simulation,
+        );
+
         // Simulate latency proportional to read size
         self.simulate_latency(buf.len()).await;
 
         // Check for failure injection
         if self.should_fail("read") {
             self.metrics.record_failure();
+            self.io_scheduler
+                .lock()
+                .complete(req_id, Err("simulated read failure".to_string()));
             return Err(BackendError::ReadFailed(
                 "simulated read failure".to_string(),
             ));
@@ -331,6 +373,10 @@ impl StorageBackend for SimBackend {
             Some(data) => {
                 let to_copy = buf.len().min(data.len());
                 buf[..to_copy].copy_from_slice(&data[..to_copy]);
+
+                // Complete the I/O request after the read succeeds
+                self.io_scheduler.lock().complete(req_id, Ok(()));
+
                 self.metrics.record_read(to_copy);
 
                 tracing::debug!(
@@ -343,7 +389,12 @@ impl StorageBackend for SimBackend {
 
                 Ok(())
             }
-            None => Err(BackendError::AllocationNotFound(allocation.offset)),
+            None => {
+                self.io_scheduler
+                    .lock()
+                    .complete(req_id, Err("allocation not found".to_string()));
+                Err(BackendError::AllocationNotFound(allocation.offset))
+            }
         }
     }
 

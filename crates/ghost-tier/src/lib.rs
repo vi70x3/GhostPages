@@ -7,5 +7,5 @@
 pub mod backend;
 pub mod ram;
 
-pub use backend::{Allocation, BackendError, BackendData, StorageBackend};
+pub use backend::{Allocation, BackendData, BackendError, StorageBackend};
 pub use ram::RamBackend;

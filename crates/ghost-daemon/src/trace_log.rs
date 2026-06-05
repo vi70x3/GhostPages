@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use ghost_core::trace::{current_timestamp, TraceEvent};
+use ghost_core::trace::TraceEvent;
 
 use parking_lot::Mutex;
 
@@ -162,6 +162,7 @@ impl Clone for TraceLog {
 mod tests {
     use super::*;
     use ghost_core::state::ChunkState;
+    use ghost_core::trace::current_timestamp;
     use ghost_core::types::{ChunkId, TierId};
 
     #[test]

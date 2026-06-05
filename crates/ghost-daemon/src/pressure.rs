@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ghost_core::state::PressureState;
-use ghost_core::trace::{current_timestamp, TraceEvent};
+use ghost_core::trace::TraceEvent;
 use ghost_core::types::TierId;
 use ghost_tier::StorageBackend;
 
@@ -148,9 +148,15 @@ impl PressureHistory {
         let first_half = &recent[..mid];
         let second_half = &recent[mid..];
 
-        let avg_first = first_half.iter().map(|e| e.global.max_pressure()).sum::<f32>()
+        let avg_first = first_half
+            .iter()
+            .map(|e| e.global.max_pressure())
+            .sum::<f32>()
             / first_half.len() as f32;
-        let avg_second = second_half.iter().map(|e| e.global.max_pressure()).sum::<f32>()
+        let avg_second = second_half
+            .iter()
+            .map(|e| e.global.max_pressure())
+            .sum::<f32>()
             / second_half.len() as f32;
 
         let diff = avg_second - avg_first;
@@ -273,7 +279,7 @@ impl PressureMonitor {
 
         for (tier_id, backend) in backends {
             let pressure = backend.pressure();
-            per_tier.insert(*tier_id, pressure.clone());
+            per_tier.insert(*tier_id, pressure);
 
             max_mem = max_mem.max(pressure.memory_pressure);
             max_vram = max_vram.max(pressure.vram_pressure);
@@ -299,11 +305,12 @@ impl PressureMonitor {
                 alpha * raw_global.vram_pressure + (1.0 - alpha) * smoothed.vram_pressure;
             smoothed.io_pressure =
                 alpha * raw_global.io_pressure + (1.0 - alpha) * smoothed.io_pressure;
-            smoothed.queue_depth =
-                (alpha * raw_global.queue_depth as f32 + (1.0 - alpha) * smoothed.queue_depth as f32)
-                    as u32;
+            smoothed.queue_depth = (alpha * raw_global.queue_depth as f32
+                + (1.0 - alpha) * smoothed.queue_depth as f32)
+                as u32;
             smoothed.throughput_bps = (alpha * raw_global.throughput_bps as f32
-                + (1.0 - alpha) * smoothed.throughput_bps as f32) as u64;
+                + (1.0 - alpha) * smoothed.throughput_bps as f32)
+                as u64;
             smoothed.clamp();
         }
 
@@ -312,14 +319,14 @@ impl PressureMonitor {
             let mut history = self.history.lock();
             history.push(PressureHistoryEntry {
                 timestamp,
-                global: raw_global.clone(),
+                global: raw_global,
                 per_tier: per_tier.clone(),
             });
         }
 
         // Emit trace event
         self.trace_log.record(TraceEvent::PressureSample {
-            state: raw_global.clone(),
+            state: raw_global,
             timestamp,
         });
 
@@ -375,7 +382,8 @@ impl PressureMonitor {
             tracing::warn!(
                 "Critical pressure detected: max={:.2}, tier breakdown: {:?}",
                 raw_global.max_pressure(),
-                per_tier.iter()
+                per_tier
+                    .iter()
                     .map(|(t, p)| format!("{:?}: {:.2}", t, p.max_pressure()))
                     .collect::<Vec<_>>()
             );
@@ -393,8 +401,6 @@ impl PressureMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ghost_core::types::ChunkId;
-
     fn test_trace_log() -> Arc<TraceLog> {
         Arc::new(TraceLog::new(1000))
     }
@@ -632,7 +638,7 @@ mod tests {
             .unwrap();
 
         rt.block_on(async {
-            let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+            let (_shutdown_tx, _shutdown_rx) = watch::channel(false);
 
             // Sample manually by calling the monitor's internal method logic
             let mut per_tier = HashMap::new();
@@ -640,7 +646,7 @@ mod tests {
 
             for (tier_id, backend) in &backends {
                 let pressure = backend.pressure();
-                per_tier.insert(*tier_id, pressure.clone());
+                per_tier.insert(*tier_id, pressure);
                 max_mem = max_mem.max(pressure.memory_pressure);
             }
 
@@ -710,9 +716,13 @@ mod tests {
 
             // With empty backends, no PressureAlert should be emitted
             let events = trace_log.get_events();
-            assert!(events.iter().any(|e| matches!(e, TraceEvent::PressureSample { .. })));
+            assert!(events
+                .iter()
+                .any(|e| matches!(e, TraceEvent::PressureSample { .. })));
             // No pressure alert at zero pressure
-            assert!(!events.iter().any(|e| matches!(e, TraceEvent::PressureAlert { .. })));
+            assert!(!events
+                .iter()
+                .any(|e| matches!(e, TraceEvent::PressureAlert { .. })));
         });
     }
 }

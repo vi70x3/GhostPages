@@ -33,9 +33,8 @@ pub struct ZstdEngine;
 
 impl CompressionEngine for ZstdEngine {
     fn compress(&self, data: &[u8], config: &CompressionConfig) -> GhostResult<Vec<u8>> {
-        zstd::bulk::compress(data, config.level).map_err(|e| {
-            GhostError::CompressionError(format!("zstd compression failed: {}", e))
-        })
+        zstd::bulk::compress(data, config.level)
+            .map_err(|e| GhostError::CompressionError(format!("zstd compression failed: {}", e)))
     }
 
     fn decompress(&self, data: &[u8], expected_size: Option<usize>) -> GhostResult<Vec<u8>> {
@@ -43,9 +42,8 @@ impl CompressionEngine for ZstdEngine {
         // If expected_size is provided, use it as the max output buffer size.
         // Otherwise, use a generous default (256 MB) to handle most cases.
         let max_size = expected_size.unwrap_or(256 * 1024 * 1024);
-        zstd::bulk::decompress(data, max_size).map_err(|e| {
-            GhostError::CompressionError(format!("zstd decompression failed: {}", e))
-        })
+        zstd::bulk::decompress(data, max_size)
+            .map_err(|e| GhostError::CompressionError(format!("zstd decompression failed: {}", e)))
     }
 }
 
@@ -138,7 +136,8 @@ mod tests {
         let config = CompressionConfig::default();
 
         let compressed = compress(data, CompressionAlgorithm::Zstd, &config).unwrap();
-        let decompressed = decompress(&compressed, CompressionAlgorithm::Zstd, Some(data.len())).unwrap();
+        let decompressed =
+            decompress(&compressed, CompressionAlgorithm::Zstd, Some(data.len())).unwrap();
 
         assert_eq!(data, decompressed.as_slice());
     }
@@ -176,7 +175,8 @@ mod tests {
         // Highly compressible data should compress well
         assert!(compressed.len() < data.len() / 10);
 
-        let decompressed = decompress(&compressed, CompressionAlgorithm::Zstd, Some(data.len())).unwrap();
+        let decompressed =
+            decompress(&compressed, CompressionAlgorithm::Zstd, Some(data.len())).unwrap();
         assert_eq!(data, decompressed.as_slice());
     }
 
@@ -209,8 +209,18 @@ mod tests {
         assert!(high_compressed.len() <= low_compressed.len());
 
         // Both should decompress correctly
-        let low_decompressed = decompress(&low_compressed, CompressionAlgorithm::Zstd, Some(data.len())).unwrap();
-        let high_decompressed = decompress(&high_compressed, CompressionAlgorithm::Zstd, Some(data.len())).unwrap();
+        let low_decompressed = decompress(
+            &low_compressed,
+            CompressionAlgorithm::Zstd,
+            Some(data.len()),
+        )
+        .unwrap();
+        let high_decompressed = decompress(
+            &high_compressed,
+            CompressionAlgorithm::Zstd,
+            Some(data.len()),
+        )
+        .unwrap();
 
         assert_eq!(data, low_decompressed.as_slice());
         assert_eq!(data, high_decompressed.as_slice());

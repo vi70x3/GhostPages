@@ -14,9 +14,7 @@ use ghost_core::types::{ChunkId, ChunkMeta, TierId};
 use tokio::net::UnixStream;
 
 use crate::frame::{read_frame, write_frame};
-use crate::protocol::{
-    IpcRequest, IpcResponse, TierInfo,
-};
+use crate::protocol::{IpcRequest, IpcResponse, TierInfo};
 
 /// Timeout for individual request-response cycles.
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
@@ -48,10 +46,7 @@ impl IpcClient {
     }
 
     /// Connect with a custom timeout.
-    pub async fn connect_with_timeout(
-        socket_path: &Path,
-        timeout: Duration,
-    ) -> GhostResult<Self> {
+    pub async fn connect_with_timeout(socket_path: &Path, timeout: Duration) -> GhostResult<Self> {
         let stream = UnixStream::connect(socket_path)
             .await
             .map_err(|e| GhostError::IpcError(format!("failed to connect: {}", e)))?;
@@ -69,9 +64,8 @@ impl IpcClient {
     /// delegate to this.
     pub async fn send_request(&mut self, request: IpcRequest) -> GhostResult<IpcResponse> {
         // Serialize request to JSON
-        let request_json = serde_json::to_vec(&request).map_err(|e| {
-            GhostError::IpcError(format!("failed to serialize request: {}", e))
-        })?;
+        let request_json = serde_json::to_vec(&request)
+            .map_err(|e| GhostError::IpcError(format!("failed to serialize request: {}", e)))?;
 
         // Write length-prefixed frame
         write_frame(&mut self.stream, &request_json).await?;
@@ -82,9 +76,8 @@ impl IpcClient {
             .map_err(|_| GhostError::Timeout)??;
 
         // Deserialize response
-        let response: IpcResponse = serde_json::from_slice(&response_bytes).map_err(|e| {
-            GhostError::IpcError(format!("failed to deserialize response: {}", e))
-        })?;
+        let response: IpcResponse = serde_json::from_slice(&response_bytes)
+            .map_err(|e| GhostError::IpcError(format!("failed to deserialize response: {}", e)))?;
 
         Ok(response)
     }
@@ -94,11 +87,7 @@ impl IpcClient {
     /// Store data in the daemon.
     ///
     /// Returns the ChunkId of the stored data.
-    pub async fn store(
-        &mut self,
-        data: Vec<u8>,
-        tier: Option<TierId>,
-    ) -> GhostResult<ChunkId> {
+    pub async fn store(&mut self, data: Vec<u8>, tier: Option<TierId>) -> GhostResult<ChunkId> {
         let response = self.send_request(IpcRequest::Store { data, tier }).await?;
         match response {
             IpcResponse::ChunkId { chunk_id } => Ok(chunk_id),
@@ -116,7 +105,9 @@ impl IpcClient {
     /// Retrieve data by ChunkId.
     pub async fn retrieve(&mut self, chunk_id: &ChunkId) -> GhostResult<Vec<u8>> {
         let response = self
-            .send_request(IpcRequest::Retrieve { chunk_id: *chunk_id })
+            .send_request(IpcRequest::Retrieve {
+                chunk_id: *chunk_id,
+            })
             .await?;
         match response {
             IpcResponse::Ok { data } => data.ok_or_else(|| {
@@ -136,7 +127,9 @@ impl IpcClient {
     /// Delete a chunk.
     pub async fn delete(&mut self, chunk_id: &ChunkId) -> GhostResult<()> {
         let response = self
-            .send_request(IpcRequest::Delete { chunk_id: *chunk_id })
+            .send_request(IpcRequest::Delete {
+                chunk_id: *chunk_id,
+            })
             .await?;
         match response {
             IpcResponse::Ok { .. } => Ok(()),
@@ -181,7 +174,9 @@ impl IpcClient {
     /// Get chunk metadata.
     pub async fn info(&mut self, chunk_id: &ChunkId) -> GhostResult<ChunkMeta> {
         let response = self
-            .send_request(IpcRequest::Info { chunk_id: *chunk_id })
+            .send_request(IpcRequest::Info {
+                chunk_id: *chunk_id,
+            })
             .await?;
         match response {
             IpcResponse::Info { meta } => Ok(meta),
@@ -197,10 +192,7 @@ impl IpcClient {
     }
 
     /// List chunks, optionally filtered by tier.
-    pub async fn list(
-        &mut self,
-        tier: Option<TierId>,
-    ) -> GhostResult<Vec<(ChunkId, ChunkMeta)>> {
+    pub async fn list(&mut self, tier: Option<TierId>) -> GhostResult<Vec<(ChunkId, ChunkMeta)>> {
         let response = self.send_request(IpcRequest::List { tier }).await?;
         match response {
             IpcResponse::List { chunks } => Ok(chunks),
@@ -261,9 +253,7 @@ impl IpcClient {
 
     /// Get recent trace events.
     pub async fn trace(&mut self, count: Option<usize>) -> GhostResult<Vec<TraceEvent>> {
-        let response = self
-            .send_request(IpcRequest::Trace { count })
-            .await?;
+        let response = self.send_request(IpcRequest::Trace { count }).await?;
         match response {
             IpcResponse::Trace { events } => Ok(events),
             IpcResponse::Error { code, message } => Err(GhostError::IpcError(format!(
@@ -298,15 +288,15 @@ impl IpcClient {
         let response = self.send_request(IpcRequest::Shutdown).await?;
         match response {
             IpcResponse::Ok { .. } | IpcResponse::Pong => Ok(()),
-            IpcResponse::Error {
-                code: _,
-                message,
-            } => {
+            IpcResponse::Error { code: _, message } => {
                 // Shutdown may close the connection before responding
                 if message.contains("shutting down") || message.contains("connection") {
                     Ok(())
                 } else {
-                    Err(GhostError::IpcError(format!("shutdown failed: {}", message)))
+                    Err(GhostError::IpcError(format!(
+                        "shutdown failed: {}",
+                        message
+                    )))
                 }
             }
             other => Err(GhostError::IpcError(format!(

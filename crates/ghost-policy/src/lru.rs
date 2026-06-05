@@ -183,11 +183,7 @@ impl PlacementPolicy for LruPolicy {
         None
     }
 
-    fn migration_priority(
-        &self,
-        meta: &ChunkMeta,
-        pressure: &PressureState,
-    ) -> TransferPriority {
+    fn migration_priority(&self, meta: &ChunkMeta, pressure: &PressureState) -> TransferPriority {
         // Critical: hot chunk on slow tier under pressure
         if self.is_hot(meta) && pressure.memory_pressure > 0.9 {
             return TransferPriority::Critical;
@@ -291,7 +287,10 @@ mod tests {
         let candidates = vec![
             (ChunkId::from_data(b"a"), make_chunk(now, now, TierId::Ram)),
             (ChunkId::from_data(b"b"), make_chunk(old, old, TierId::Ram)),
-            (ChunkId::from_data(b"c"), make_chunk(older, older, TierId::Ram)),
+            (
+                ChunkId::from_data(b"c"),
+                make_chunk(older, older, TierId::Ram),
+            ),
         ];
 
         let pressure = PressureState::new();

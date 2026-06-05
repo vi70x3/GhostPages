@@ -13,9 +13,12 @@ ghost-core = { path = "../ghost-core" }
 ghost-metrics = { path = "../ghost-metrics" }
 bincode.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "rt", "rt-multi-thread", "io-util"] }
 tracing.workspace = true
+crc32fast = "1.3"
+csv = "1"
 
 [dev-dependencies]
 tempfile.workspace = true

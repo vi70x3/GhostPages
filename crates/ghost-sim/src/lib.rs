@@ -13,18 +13,17 @@ pub mod config;
 pub mod metrics;
 
 use async_trait::async_trait;
-use blake3;
 use bytes::Bytes;
 use config::SimConfig;
 use ghost_core::error::GhostError;
 use ghost_core::state::{ChunkState, PressureState, StateMachine};
-use ghost_core::types::TierId;
 use ghost_core::types::ChunkId;
+use ghost_core::types::TierId;
 use ghost_tier::backend::{Allocation, BackendData, BackendError, StorageBackend};
 use metrics::SimMetrics;
 use parking_lot::Mutex;
-use rand::SeedableRng;
 use rand::Rng;
+use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -133,12 +132,14 @@ impl SimBackend {
 
     /// Calculate effective available space considering fragmentation.
     fn effective_available(&self) -> usize {
-        let raw_available = self.config.capacity.saturating_sub(self.used.load(Ordering::Relaxed) as usize);
+        let raw_available = self
+            .config
+            .capacity
+            .saturating_sub(self.used.load(Ordering::Relaxed) as usize);
         if !self.config.simulate_fragmentation || self.config.fragmentation_factor <= 0.0 {
             return raw_available;
         }
-        let usable = (raw_available as f64 * (1.0 - self.config.fragmentation_factor)).floor() as usize;
-        usable
+        (raw_available as f64 * (1.0 - self.config.fragmentation_factor)).floor() as usize
     }
 
     /// Get the current memory pressure as a ratio (0.0 to 1.0).
@@ -248,7 +249,8 @@ impl StorageBackend for SimBackend {
         storage.remove(&allocation.offset);
         drop(storage);
 
-        self.used.fetch_sub(allocation.size as u64, Ordering::Relaxed);
+        self.used
+            .fetch_sub(allocation.size as u64, Ordering::Relaxed);
         self.metrics.record_dealloc(allocation.size);
 
         tracing::debug!(
@@ -304,11 +306,7 @@ impl StorageBackend for SimBackend {
         Ok(())
     }
 
-    async fn read(
-        &self,
-        allocation: &Allocation,
-        buf: &mut [u8],
-    ) -> Result<(), BackendError> {
+    async fn read(&self, allocation: &Allocation, buf: &mut [u8]) -> Result<(), BackendError> {
         if buf.len() > allocation.size {
             return Err(BackendError::ReadFailed(format!(
                 "buffer size {} exceeds allocation size {}",
@@ -409,7 +407,11 @@ impl SimBackend {
     }
 
     /// Transition a chunk to a new state.
-    pub fn transition_chunk(&self, chunk_id: &ChunkId, next: ChunkState) -> Result<ChunkState, GhostError> {
+    pub fn transition_chunk(
+        &self,
+        chunk_id: &ChunkId,
+        next: ChunkState,
+    ) -> Result<ChunkState, GhostError> {
         self.state_machine.lock().transition(chunk_id, next)
     }
 
@@ -431,13 +433,11 @@ mod tests {
     use ghost_core::types::ChunkId;
 
     fn test_config() -> SimConfig {
-        SimConfig::default()
-            .with_seed(42)
+        SimConfig::default().with_seed(42)
     }
 
     fn test_config_with_capacity(capacity: usize) -> SimConfig {
-        SimConfig::with_capacity(capacity)
-            .with_seed(42)
+        SimConfig::with_capacity(capacity).with_seed(42)
     }
 
     #[tokio::test]
@@ -480,7 +480,10 @@ mod tests {
         let result = backend.allocate(50).await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            BackendError::InsufficientSpace { requested, available } => {
+            BackendError::InsufficientSpace {
+                requested,
+                available,
+            } => {
                 assert_eq!(requested, 50);
                 assert!(available < 50);
             }
@@ -537,7 +540,10 @@ mod tests {
         let expected_hash = *blake3::hash(data).as_bytes();
 
         // Verify integrity should pass
-        backend.verify_integrity(&alloc, &expected_hash).await.unwrap();
+        backend
+            .verify_integrity(&alloc, &expected_hash)
+            .await
+            .unwrap();
 
         // Verify with wrong hash should fail
         let wrong_hash = [0u8; 32];
@@ -577,9 +583,18 @@ mod tests {
         backend2.write(&alloc2_a, data1).await.unwrap();
 
         // Both should have the same metrics
-        assert_eq!(backend1.metrics().alloc_count(), backend2.metrics().alloc_count());
-        assert_eq!(backend1.metrics().write_count(), backend2.metrics().write_count());
-        assert_eq!(backend1.metrics().bytes_written(), backend2.metrics().bytes_written());
+        assert_eq!(
+            backend1.metrics().alloc_count(),
+            backend2.metrics().alloc_count()
+        );
+        assert_eq!(
+            backend1.metrics().write_count(),
+            backend2.metrics().write_count()
+        );
+        assert_eq!(
+            backend1.metrics().bytes_written(),
+            backend2.metrics().bytes_written()
+        );
 
         // Read back and verify
         let mut buf1 = vec![0u8; data1.len()];
@@ -614,10 +629,7 @@ mod tests {
         // Write should always fail
         let result = backend.write(&alloc, data).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            BackendError::WriteFailed(_)
-        ));
+        assert!(matches!(result.unwrap_err(), BackendError::WriteFailed(_)));
 
         // Failure should be recorded
         assert!(backend.metrics().failure_count() > 0);
@@ -650,10 +662,7 @@ mod tests {
         let mut buf = vec![0u8; data.len()];
         let result = backend.read(&alloc, &mut buf).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            BackendError::ReadFailed(_)
-        ));
+        assert!(matches!(result.unwrap_err(), BackendError::ReadFailed(_)));
 
         backend.deallocate(alloc).await.unwrap();
     }
@@ -676,19 +685,27 @@ mod tests {
         backend.write(&alloc, data).await.unwrap();
 
         // Transition to Stored
-        backend.transition_chunk(&chunk_id, ChunkState::Stored).unwrap();
+        backend
+            .transition_chunk(&chunk_id, ChunkState::Stored)
+            .unwrap();
         assert_eq!(backend.chunk_state(&chunk_id), Some(ChunkState::Stored));
 
         // Transition to Cached
-        backend.transition_chunk(&chunk_id, ChunkState::Cached).unwrap();
+        backend
+            .transition_chunk(&chunk_id, ChunkState::Cached)
+            .unwrap();
         assert_eq!(backend.chunk_state(&chunk_id), Some(ChunkState::Cached));
 
         // Transition back to Stored first (Cached -> Evicted is not valid)
-        backend.transition_chunk(&chunk_id, ChunkState::Stored).unwrap();
+        backend
+            .transition_chunk(&chunk_id, ChunkState::Stored)
+            .unwrap();
         assert_eq!(backend.chunk_state(&chunk_id), Some(ChunkState::Stored));
 
         // Transition to Evicted
-        backend.transition_chunk(&chunk_id, ChunkState::Evicted).unwrap();
+        backend
+            .transition_chunk(&chunk_id, ChunkState::Evicted)
+            .unwrap();
         assert_eq!(backend.chunk_state(&chunk_id), Some(ChunkState::Evicted));
 
         backend.deallocate(alloc).await.unwrap();

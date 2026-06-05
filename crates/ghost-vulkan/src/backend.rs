@@ -63,11 +63,7 @@ impl StorageBackend for VulkanBackend {
         ))
     }
 
-    async fn read(
-        &self,
-        _allocation: &Allocation,
-        _buf: &mut [u8],
-    ) -> Result<(), BackendError> {
+    async fn read(&self, _allocation: &Allocation, _buf: &mut [u8]) -> Result<(), BackendError> {
         Err(BackendError::NotSupported(
             "Vulkan backend is not yet implemented (Phase 4)".to_string(),
         ))

@@ -119,7 +119,7 @@ impl Default for WorkerPoolConfig {
 }
 
 /// Current status of the orchestrator.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct OrchestratorStatus {
     /// Current queue depth.
     pub queue_depth: usize,
@@ -153,24 +153,6 @@ pub struct OrchestratorStatus {
 
     /// Whether the orchestrator is shutting down.
     pub shutting_down: bool,
-}
-
-impl Default for OrchestratorStatus {
-    fn default() -> Self {
-        Self {
-            queue_depth: 0,
-            queue_full: false,
-            active_workers: 0,
-            jobs_submitted: 0,
-            jobs_completed: 0,
-            jobs_failed: 0,
-            jobs_cancelled: 0,
-            bytes_transferred: 0,
-            total_transfer_time_ms: 0,
-            trace_event_count: 0,
-            shutting_down: false,
-        }
-    }
 }
 
 #[cfg(test)]

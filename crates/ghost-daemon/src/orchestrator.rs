@@ -33,6 +33,7 @@ use crate::worker::WorkerPool;
 pub struct TransferOrchestrator {
     config: OrchestratorConfig,
     queue: Arc<TransferQueue>,
+    /// Chunk state machine for tracking state transitions.
     pub state_machine: Arc<std::sync::Mutex<StateMachine>>,
     trace_log: Arc<TraceLog>,
     metrics: Arc<TransferMetrics>,
@@ -125,6 +126,7 @@ impl TransferOrchestrator {
             self.backends.clone(),
             self.trace_log.clone(),
             self.metrics.clone(),
+            self.state_machine.clone(),
         );
 
         let (job_tx, worker_handles) = worker_pool.start(shutdown_rx.clone());
@@ -172,14 +174,15 @@ impl TransferOrchestrator {
             let mut am_shutdown_rx = shutdown_rx.clone();
             let pressure_tx = self.pressure_tx.clone();
             tokio::spawn(async move {
-                let mut ticker =
-                    tokio::time::interval(std::time::Duration::from_millis(auto_migration_interval));
+                let mut ticker = tokio::time::interval(std::time::Duration::from_millis(
+                    auto_migration_interval,
+                ));
                 loop {
                     tokio::select! {
                         _ = ticker.tick() => {
                             // Auto-migration logic: check pressure and migrate hot chunks
                             if let Some(ref tx) = pressure_tx {
-                                let pressure = tx.borrow().clone();
+                                let pressure = *tx.borrow();
                                 if pressure.is_under_pressure() {
                                     tracing::debug!(
                                         "Auto-migration: system under pressure ({:.2}), scanning for migration candidates",
@@ -327,10 +330,7 @@ impl TransferOrchestrator {
                     });
                 }
                 None => {
-                    // Register and set up
-                    sm.register(chunk_id)?;
-                    sm.transition(&chunk_id, ChunkState::Stored)?;
-                    sm.transition(&chunk_id, ChunkState::Migrating)?;
+                    return Err(GhostError::ChunkNotFound(format!("{:?}", chunk_id)));
                 }
             }
         }
@@ -390,13 +390,34 @@ impl TransferOrchestrator {
 
     /// Get the current orchestrator status.
     pub fn status(&self) -> crate::config::OrchestratorStatus {
-        let submitted = self.metrics.jobs_submitted.load(std::sync::atomic::Ordering::Relaxed);
-        let completed = self.metrics.jobs_completed.load(std::sync::atomic::Ordering::Relaxed);
-        let failed = self.metrics.jobs_failed.load(std::sync::atomic::Ordering::Relaxed);
-        let cancelled = self.metrics.jobs_cancelled.load(std::sync::atomic::Ordering::Relaxed);
-        let bytes = self.metrics.bytes_transferred.load(std::sync::atomic::Ordering::Relaxed);
-        let transfer_time = self.metrics.total_transfer_time_ms.load(std::sync::atomic::Ordering::Relaxed);
-        let active = self.metrics.active_workers.load(std::sync::atomic::Ordering::Relaxed);
+        let submitted = self
+            .metrics
+            .jobs_submitted
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let completed = self
+            .metrics
+            .jobs_completed
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let failed = self
+            .metrics
+            .jobs_failed
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let cancelled = self
+            .metrics
+            .jobs_cancelled
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let bytes = self
+            .metrics
+            .bytes_transferred
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let transfer_time = self
+            .metrics
+            .total_transfer_time_ms
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let active = self
+            .metrics
+            .active_workers
+            .load(std::sync::atomic::Ordering::Relaxed);
 
         crate::config::OrchestratorStatus {
             queue_depth: self.queue.depth(),
@@ -413,13 +434,65 @@ impl TransferOrchestrator {
         }
     }
 
+    /// Export the trace log to a binary trace file.
+    ///
+    /// Writes all recorded trace events to the given path in the GhostPages
+    /// binary trace format, including CRC32 checksums and metadata.
+    pub fn export_trace_log(
+        &self,
+        path: &std::path::Path,
+        policy_name: &str,
+        config_summary: &str,
+    ) -> GhostResult<()> {
+        use ghost_replay::format::{flags, TraceMetadata};
+        use ghost_replay::writer::TraceWriter;
+
+        let events = self.trace_log.get_events();
+        let mut writer = TraceWriter::create(path, flags::HAS_CHECKSUM)
+            .map_err(|e| GhostError::ReplayError(format!("failed to create trace file: {}", e)))?;
+
+        writer
+            .write_events(&events)
+            .map_err(|e| GhostError::ReplayError(format!("failed to write events: {}", e)))?;
+
+        let tier_ids: Vec<_> = self.backends.keys().cloned().collect();
+        let time_range = if events.is_empty() {
+            (0, 0)
+        } else {
+            (
+                events.first().unwrap().timestamp(),
+                events.last().unwrap().timestamp(),
+            )
+        };
+
+        let metadata = TraceMetadata {
+            total_events: events.len() as u64,
+            total_chunks: self.state_machine.lock().unwrap().snapshot().len() as u64,
+            tier_ids,
+            time_range,
+            policy_name: policy_name.to_string(),
+            config_summary: config_summary.to_string(),
+        };
+
+        writer
+            .close(metadata)
+            .map_err(|e| GhostError::ReplayError(format!("failed to close trace file: {}", e)))?;
+
+        tracing::info!(
+            "Exported {} trace events to {}",
+            events.len(),
+            path.display()
+        );
+        Ok(())
+    }
+
     /// Get the current smoothed pressure state.
     ///
     /// Returns the latest pressure reading from the pressure monitor.
     /// If the pressure monitor is not running, returns a default PressureState.
     pub fn current_pressure(&self) -> PressureState {
         if let Some(ref tx) = self.pressure_tx {
-            tx.borrow().clone()
+            *tx.borrow()
         } else {
             PressureState::new()
         }
@@ -483,10 +556,8 @@ impl TransferOrchestrator {
         // If RAM is under pressure, consider migrating to simulation tier
         if pressure.memory_pressure > 0.7 {
             let sm = self.state_machine.lock().unwrap();
-            let stored_chunks: Vec<ChunkId> = sm
-                .chunks_in_state(ChunkState::Stored)
-                .into_iter()
-                .collect();
+            let stored_chunks: Vec<ChunkId> =
+                sm.chunks_in_state(ChunkState::Stored).into_iter().collect();
 
             for chunk_id in stored_chunks {
                 // Build a minimal ChunkMeta for the policy check
@@ -502,8 +573,7 @@ impl TransferOrchestrator {
                     compression: ghost_core::types::CompressionAlgorithm::None,
                     checksum: [0u8; 32],
                 };
-                if let Some(target_tier) =
-                    self.policy.should_migrate(&meta, TierId::Ram, pressure)
+                if let Some(target_tier) = self.policy.should_migrate(&meta, TierId::Ram, pressure)
                 {
                     // Emit PolicyDecision event
                     self.trace_log.record(TraceEvent::PolicyDecision {
@@ -547,9 +617,8 @@ impl TransferOrchestrator {
 
         // Send shutdown signal to scheduler and workers
         if let Some(tx) = self.shutdown_tx.take() {
-            tx.send(true).map_err(|_| {
-                GhostError::Internal("shutdown signal already sent".to_string())
-            })?;
+            tx.send(true)
+                .map_err(|_| GhostError::Internal("shutdown signal already sent".to_string()))?;
         }
 
         // Wait for queue to drain (up to shutdown timeout)
@@ -615,7 +684,8 @@ mod tests {
         );
         backends.insert(
             TierId::Simulation,
-            Arc::new(RamBackend::with_id(TierId::Simulation, 1024 * 1024)) as Arc<dyn StorageBackend>,
+            Arc::new(RamBackend::with_id(TierId::Simulation, 1024 * 1024))
+                as Arc<dyn StorageBackend>,
         );
         backends
     }
@@ -663,13 +733,17 @@ mod tests {
 
         // Check metrics
         assert_eq!(
-            orch.metrics().jobs_submitted.load(std::sync::atomic::Ordering::Relaxed),
+            orch.metrics()
+                .jobs_submitted
+                .load(std::sync::atomic::Ordering::Relaxed),
             1
         );
 
         // Check trace log
         let events = orch.trace_log().get_events();
-        assert!(events.iter().any(|e| matches!(e, TraceEvent::ChunkCreated { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, TraceEvent::ChunkCreated { .. })));
     }
 
     #[test]
@@ -699,6 +773,8 @@ mod tests {
         let orch = test_orchestrator();
         let chunk_id = ChunkId::from_data(b"migrate_test");
 
+        // Store the chunk first so it is registered in the state machine
+        orch.store(chunk_id, TierId::Ram, b"migrate_data").unwrap();
         let result = orch.migrate(chunk_id, TierId::Ram, TierId::Simulation, 1024);
         assert!(result.is_ok());
 
@@ -727,7 +803,9 @@ mod tests {
 
         // Check that Eviction trace event was emitted
         let events = orch.trace_log().get_events();
-        assert!(events.iter().any(|e| matches!(e, TraceEvent::Eviction { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, TraceEvent::Eviction { .. })));
     }
 
     #[test]
@@ -756,7 +834,9 @@ mod tests {
 
         // Check that DaemonStopping event was emitted
         let events = orch.trace_log().get_events();
-        assert!(events.iter().any(|e| matches!(e, TraceEvent::DaemonStopping { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, TraceEvent::DaemonStopping { .. })));
     }
 
     #[test]
@@ -798,7 +878,19 @@ mod tests {
         let orch = test_orchestrator();
         let events = orch.trace_log().get_events();
         // Should have BackendRegistered events for Ram and Simulation
-        assert!(events.iter().any(|e| matches!(e, TraceEvent::BackendRegistered { tier: TierId::Ram, .. })));
-        assert!(events.iter().any(|e| matches!(e, TraceEvent::BackendRegistered { tier: TierId::Simulation, .. })));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            TraceEvent::BackendRegistered {
+                tier: TierId::Ram,
+                ..
+            }
+        )));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            TraceEvent::BackendRegistered {
+                tier: TierId::Simulation,
+                ..
+            }
+        )));
     }
 }

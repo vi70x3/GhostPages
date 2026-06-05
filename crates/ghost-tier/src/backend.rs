@@ -137,11 +137,7 @@ pub trait StorageBackend: Send + Sync + 'static {
     /// Read data from an allocation into a buffer.
     ///
     /// The buffer length must not exceed the allocation size.
-    async fn read(
-        &self,
-        allocation: &Allocation,
-        buf: &mut [u8],
-    ) -> Result<(), BackendError>;
+    async fn read(&self, allocation: &Allocation, buf: &mut [u8]) -> Result<(), BackendError>;
 
     /// Verify the integrity of data at an allocation.
     ///

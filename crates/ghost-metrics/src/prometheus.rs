@@ -67,17 +67,13 @@ impl PrometheusMetrics {
     pub fn new() -> GhostResult<Self> {
         let registry = Arc::new(Registry::new());
 
-        let store_total = IntCounter::new(
-            "ghostpages_store_total",
-            "Total number of store operations",
-        )
-        .map_err(prom_err)?;
+        let store_total =
+            IntCounter::new("ghostpages_store_total", "Total number of store operations")
+                .map_err(prom_err)?;
 
-        let store_bytes_total = IntCounter::new(
-            "ghostpages_store_bytes_total",
-            "Total bytes stored",
-        )
-        .map_err(prom_err)?;
+        let store_bytes_total =
+            IntCounter::new("ghostpages_store_bytes_total", "Total bytes stored")
+                .map_err(prom_err)?;
 
         let store_errors_total = IntCounter::new(
             "ghostpages_store_errors_total",
@@ -91,11 +87,9 @@ impl PrometheusMetrics {
         )
         .map_err(prom_err)?;
 
-        let retrieve_bytes_total = IntCounter::new(
-            "ghostpages_retrieve_bytes_total",
-            "Total bytes retrieved",
-        )
-        .map_err(prom_err)?;
+        let retrieve_bytes_total =
+            IntCounter::new("ghostpages_retrieve_bytes_total", "Total bytes retrieved")
+                .map_err(prom_err)?;
 
         let retrieve_errors_total = IntCounter::new(
             "ghostpages_retrieve_errors_total",
@@ -115,15 +109,12 @@ impl PrometheusMetrics {
         )
         .map_err(prom_err)?;
 
-        let tier_capacity_bytes = IntGauge::new(
-            "ghostpages_tier_capacity_bytes",
-            "Tier capacity in bytes",
-        )
-        .map_err(prom_err)?;
+        let tier_capacity_bytes =
+            IntGauge::new("ghostpages_tier_capacity_bytes", "Tier capacity in bytes")
+                .map_err(prom_err)?;
 
         let tier_used_bytes =
-            IntGauge::new("ghostpages_tier_used_bytes", "Tier used bytes")
-                .map_err(prom_err)?;
+            IntGauge::new("ghostpages_tier_used_bytes", "Tier used bytes").map_err(prom_err)?;
 
         let ingress_queue_depth = IntGauge::new(
             "ghostpages_ingress_queue_depth",

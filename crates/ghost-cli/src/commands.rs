@@ -7,7 +7,11 @@ use clap::Parser;
 
 /// GhostPages CLI.
 #[derive(Debug, Parser)]
-#[command(name = "ghostpages", version, about = "GhostPages memory-tiering system")]
+#[command(
+    name = "ghostpages",
+    version,
+    about = "GhostPages memory-tiering system"
+)]
 pub struct Cli {
     /// Subcommand to execute.
     #[command(subcommand)]

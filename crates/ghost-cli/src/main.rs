@@ -98,6 +98,35 @@ enum Commands {
 
     /// Ping the daemon.
     Ping,
+
+    /// Replay a trace file and validate state transitions.
+    Replay {
+        /// Path to the trace file.
+        file: std::path::PathBuf,
+        /// Maximum number of events to replay (0 = all).
+        #[arg(long)]
+        max_events: Option<u64>,
+        /// Stop on the first validation error.
+        #[arg(long)]
+        stop_on_error: bool,
+    },
+
+    /// Export a trace file to another format.
+    ExportTrace {
+        /// Path to the input trace file.
+        file: std::path::PathBuf,
+        /// Output file path.
+        output: std::path::PathBuf,
+        /// Export format (json, jsonl, csv).
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+
+    /// Show replay metrics for a trace file.
+    ReplayMetrics {
+        /// Path to the trace file.
+        file: std::path::PathBuf,
+    },
 }
 
 // ─── Main ──────────────────────────────────────────────────────────────────────
@@ -171,7 +200,10 @@ async fn main() -> Result<()> {
             } else {
                 println!("Found {} chunks:", chunks.len());
                 for (id, meta) in &chunks {
-                    println!("  {}  size={}  tier={}  state={}", id, meta.size, meta.tier, meta.state);
+                    println!(
+                        "  {}  size={}  tier={}  state={}",
+                        id, meta.size, meta.tier, meta.state
+                    );
                 }
             }
         }
@@ -227,6 +259,132 @@ async fn main() -> Result<()> {
             client.ping().await.context("ping failed")?;
             println!("Pong! Daemon is alive.");
         }
+
+        Commands::Replay {
+            file,
+            max_events,
+            stop_on_error,
+        } => {
+            use ghost_replay::{ReplayConfig, ReplayEngine};
+
+            let config = ReplayConfig {
+                validate_transitions: true,
+                stop_on_error,
+                max_events: max_events.unwrap_or(0),
+            };
+
+            let (_engine, summary) = ReplayEngine::load(&file, config)
+                .with_context(|| format!("failed to replay trace file: {}", file.display()))?;
+
+            println!("=== Replay Summary ===");
+            println!("Events replayed: {}", summary.events_replayed);
+            println!("Chunks created: {}", summary.chunks_created);
+            println!("Chunks deleted: {}", summary.chunks_deleted);
+            println!("State transitions: {}", summary.state_transitions);
+            println!("Transfers completed: {}", summary.transfers_completed);
+            println!("Transfers failed: {}", summary.transfers_failed);
+            println!("Evictions: {}", summary.evictions);
+            println!("Pressure alerts: {}", summary.pressure_alerts);
+            println!("Policy decisions: {}", summary.policy_decisions);
+            println!("Unique chunks: {}", summary.unique_chunks);
+            println!("Validation errors: {}", summary.validation_errors);
+
+            if !summary.errors.is_empty() {
+                println!();
+                println!(
+                    "=== Validation Errors (first {}) ===",
+                    summary.errors.len().min(10)
+                );
+                for err in summary.errors.iter().take(10) {
+                    println!("  Event {}: {}", err.event_index, err.message);
+                }
+            }
+        }
+
+        Commands::ExportTrace {
+            file,
+            output,
+            format,
+        } => {
+            use ghost_replay::{export_trace, ExportFormat, TraceReader};
+
+            let mut reader = TraceReader::open(&file)
+                .with_context(|| format!("failed to open trace file: {}", file.display()))?;
+            let events = reader
+                .read_all()
+                .with_context(|| format!("failed to read trace file: {}", file.display()))?;
+
+            let format = format
+                .parse::<ExportFormat>()
+                .with_context(|| format!("invalid export format: {}", format))?;
+
+            let mut out_file = std::fs::File::create(&output)
+                .with_context(|| format!("failed to create output file: {}", output.display()))?;
+            export_trace(&events, &mut out_file, format).with_context(|| "export failed")?;
+
+            println!(
+                "Exported {} events to {} ({})",
+                events.len(),
+                output.display(),
+                format
+            );
+        }
+
+        Commands::ReplayMetrics { file } => {
+            use ghost_replay::{ReplayMetrics, TraceReader};
+
+            let mut reader = TraceReader::open(&file)
+                .with_context(|| format!("failed to open trace file: {}", file.display()))?;
+            let events = reader
+                .read_all()
+                .with_context(|| format!("failed to read trace file: {}", file.display()))?;
+
+            let metrics = ReplayMetrics::from_events(&events);
+
+            println!("=== Replay Metrics ===");
+            println!("Total events: {}", metrics.total_events);
+            println!("Chunks created: {}", metrics.chunks_created);
+            println!("Chunks deleted: {}", metrics.chunks_deleted);
+            println!("State transitions: {}", metrics.state_transitions);
+            println!(
+                "Avg transitions/chunk: {:.2}",
+                metrics.avg_transitions_per_chunk
+            );
+            println!("Transfers completed: {}", metrics.transfers_completed);
+            println!("Transfers failed: {}", metrics.transfers_failed);
+            println!(
+                "Transfer success rate: {:.1}%",
+                metrics.transfer_success_rate * 100.0
+            );
+            println!("Evictions: {}", metrics.evictions);
+            println!("Pressure alerts: {}", metrics.pressure_alerts);
+            println!("Peak memory pressure: {:.2}", metrics.peak_memory_pressure);
+            println!("Peak VRAM pressure: {:.2}", metrics.peak_vram_pressure);
+            println!("Peak I/O pressure: {:.2}", metrics.peak_io_pressure);
+            println!("Policy decisions: {}", metrics.policy_decisions);
+            println!("Migrations decided: {}", metrics.migrations_decided);
+            println!("Unique chunks: {}", metrics.unique_chunks);
+            println!(
+                "Time range: {} - {}",
+                metrics.time_range.0, metrics.time_range.1
+            );
+
+            if !metrics.tier_distribution.is_empty() {
+                println!();
+                println!("=== Tier Distribution ===");
+                for (tier, count) in &metrics.tier_distribution {
+                    println!("  {}: {} chunks", tier, count);
+                }
+            }
+
+            if !metrics.evictions_by_reason.is_empty() {
+                println!();
+                println!("=== Evictions by Reason ===");
+                for (reason, count) in &metrics.evictions_by_reason {
+                    println!("  {}: {}", reason, count);
+                }
+            }
+        }
     }
 
     Ok(())
@@ -237,7 +395,10 @@ async fn main() -> Result<()> {
 fn parse_chunk_id(s: &str) -> Result<ChunkId> {
     let bytes = hex::decode(s).context("invalid hex string for chunk ID")?;
     if bytes.len() != 32 {
-        anyhow::bail!("chunk ID must be 32 bytes (64 hex chars), got {} bytes", bytes.len());
+        anyhow::bail!(
+            "chunk ID must be 32 bytes (64 hex chars), got {} bytes",
+            bytes.len()
+        );
     }
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
@@ -250,10 +411,7 @@ fn parse_tier(s: &str) -> Result<TierId> {
         "gpu" | "vram" | "gpuvram" => Ok(TierId::GpuVram),
         "disk" | "ssd" | "nvme" => Ok(TierId::Disk),
         "sim" | "simulation" => Ok(TierId::Simulation),
-        other => anyhow::bail!(
-            "unknown tier '{}'. Valid tiers: ram, gpu, disk, sim",
-            other
-        ),
+        other => anyhow::bail!("unknown tier '{}'. Valid tiers: ram, gpu, disk, sim", other),
     }
 }
 
@@ -292,11 +450,7 @@ fn print_tier_info(info: &TierInfo) {
     };
     println!(
         "  {}: {} / {} bytes ({:.1}%) — {} chunks",
-        info.tier_id,
-        info.used_bytes,
-        info.capacity_bytes,
-        used_pct,
-        info.chunk_count
+        info.tier_id, info.used_bytes, info.capacity_bytes, used_pct, info.chunk_count
     );
 }
 
@@ -319,15 +473,24 @@ fn print_pressure(state: &PressureState) {
 
 fn print_trace_event(event: &TraceEvent) {
     let ts = event.timestamp();
-    let chunk = event.chunk_id().map(|id| id.to_string()).unwrap_or_default();
+    let chunk = event
+        .chunk_id()
+        .map(|id| id.to_string())
+        .unwrap_or_default();
     let event_type = event.event_type();
 
     match event {
         TraceEvent::ChunkCreated { size, tier, .. } => {
-            println!("  [{}] {} chunk={} size={} tier={}", ts, event_type, chunk, size, tier);
+            println!(
+                "  [{}] {} chunk={} size={} tier={}",
+                ts, event_type, chunk, size, tier
+            );
         }
         TraceEvent::ChunkStateChanged { from, to, .. } => {
-            println!("  [{}] {} chunk={} from={} to={}", ts, event_type, chunk, from, to);
+            println!(
+                "  [{}] {} chunk={} from={} to={}",
+                ts, event_type, chunk, from, to
+            );
         }
         TraceEvent::TransferStarted { job, .. } => {
             println!(
@@ -336,7 +499,10 @@ fn print_trace_event(event: &TraceEvent) {
             );
         }
         TraceEvent::TransferCompleted {
-            from, to, duration_ms, ..
+            from,
+            to,
+            duration_ms,
+            ..
         } => {
             println!(
                 "  [{}] {} chunk={} from={} to={} duration={}ms",
@@ -352,9 +518,7 @@ fn print_trace_event(event: &TraceEvent) {
                 ts, event_type, state.memory_pressure, state.vram_pressure, state.io_pressure
             );
         }
-        TraceEvent::Eviction {
-            tier, reason, ..
-        } => {
+        TraceEvent::Eviction { tier, reason, .. } => {
             println!(
                 "  [{}] {} chunk={} tier={} reason={}",
                 ts, event_type, chunk, tier, reason

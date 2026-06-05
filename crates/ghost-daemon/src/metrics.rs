@@ -76,7 +76,8 @@ impl TransferMetrics {
 
     /// Record transfer time.
     pub fn record_transfer_time(&self, duration_ms: u64) {
-        self.total_transfer_time_ms.fetch_add(duration_ms, Ordering::Relaxed);
+        self.total_transfer_time_ms
+            .fetch_add(duration_ms, Ordering::Relaxed);
     }
 
     /// Update the current queue depth.

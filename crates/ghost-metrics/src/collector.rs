@@ -52,7 +52,8 @@ impl OperationMetrics {
     /// Record a successful store operation.
     pub fn record_store(&self, bytes: usize) {
         self.store_total.fetch_add(1, Ordering::Relaxed);
-        self.store_bytes_total.fetch_add(bytes as u64, Ordering::Relaxed);
+        self.store_bytes_total
+            .fetch_add(bytes as u64, Ordering::Relaxed);
     }
 
     /// Record a store operation error.
@@ -63,7 +64,8 @@ impl OperationMetrics {
     /// Record a successful retrieve operation.
     pub fn record_retrieve(&self, bytes: usize) {
         self.retrieve_total.fetch_add(1, Ordering::Relaxed);
-        self.retrieve_bytes_total.fetch_add(bytes as u64, Ordering::Relaxed);
+        self.retrieve_bytes_total
+            .fetch_add(bytes as u64, Ordering::Relaxed);
     }
 
     /// Record a retrieve operation error.
@@ -114,7 +116,8 @@ impl TierMetrics {
 
     /// Update the tier capacity.
     pub fn set_capacity(&self, capacity: usize) {
-        self.tier_capacity_bytes.store(capacity as u64, Ordering::Relaxed);
+        self.tier_capacity_bytes
+            .store(capacity as u64, Ordering::Relaxed);
     }
 
     /// Update the used bytes.
@@ -129,7 +132,8 @@ impl TierMetrics {
 
     /// Record a migration out of this tier.
     pub fn record_migration_out(&self) {
-        self.tier_migration_out_total.fetch_add(1, Ordering::Relaxed);
+        self.tier_migration_out_total
+            .fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -204,7 +208,10 @@ mod tests {
         metrics.record_migration_in();
         metrics.record_migration_out();
 
-        assert_eq!(metrics.tier_capacity_bytes.load(Ordering::Relaxed), 1024 * 1024);
+        assert_eq!(
+            metrics.tier_capacity_bytes.load(Ordering::Relaxed),
+            1024 * 1024
+        );
         assert_eq!(metrics.tier_used_bytes.load(Ordering::Relaxed), 512 * 1024);
         assert_eq!(metrics.tier_migration_in_total.load(Ordering::Relaxed), 1);
         assert_eq!(metrics.tier_migration_out_total.load(Ordering::Relaxed), 1);

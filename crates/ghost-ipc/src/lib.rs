@@ -28,6 +28,4 @@ pub mod client;
 
 pub use client::{IpcClient, StatusResponse};
 pub use frame::{read_frame, write_frame, MAX_FRAME_SIZE};
-pub use protocol::{
-    IpcErrorCode, IpcRequest, IpcResponse, TierInfo,
-};
+pub use protocol::{IpcErrorCode, IpcRequest, IpcResponse, TierInfo};

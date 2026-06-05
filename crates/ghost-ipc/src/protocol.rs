@@ -243,7 +243,11 @@ mod tests {
         let json = serde_json::to_string(&req).unwrap();
         let deserialized: IpcRequest = serde_json::from_str(&json).unwrap();
         match deserialized {
-            IpcRequest::Migrate { chunk_id: id, from, to } => {
+            IpcRequest::Migrate {
+                chunk_id: id,
+                from,
+                to,
+            } => {
                 assert_eq!(id, chunk_id);
                 assert_eq!(from, TierId::Ram);
                 assert_eq!(to, TierId::Disk);

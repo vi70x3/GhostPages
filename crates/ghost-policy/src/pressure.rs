@@ -182,10 +182,8 @@ impl PlacementPolicy for PressureAwarePolicy {
                     (false, true) => std::cmp::Ordering::Less,
                     _ => {
                         // Same pressure status — evict least recently accessed
-                        meta_a
-                            .last_accessed
-                            .cmp(&meta_b.last_accessed)
-                            .reverse() // oldest first = max by reversed
+                        meta_a.last_accessed.cmp(&meta_b.last_accessed).reverse()
+                        // oldest first = max by reversed
                     }
                 }
             })
@@ -205,16 +203,13 @@ impl PlacementPolicy for PressureAwarePolicy {
                 .filter(|t| *t != current_tier && !self.is_tier_critical(*t, pressure))
                 .collect();
 
-            if let Some(best) = candidates
-                .iter()
-                .max_by(|a, b| {
-                    let score_a = tier_pressure_score(**a, pressure);
-                    let score_b = tier_pressure_score(**b, pressure);
-                    score_a
-                        .partial_cmp(&score_b)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-            {
+            if let Some(best) = candidates.iter().max_by(|a, b| {
+                let score_a = tier_pressure_score(**a, pressure);
+                let score_b = tier_pressure_score(**b, pressure);
+                score_a
+                    .partial_cmp(&score_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }) {
                 return Some(*best);
             }
         }
@@ -233,16 +228,13 @@ impl PlacementPolicy for PressureAwarePolicy {
                     .filter(|t| *t != current_tier)
                     .collect();
 
-                if let Some(best) = candidates
-                    .iter()
-                    .max_by(|a, b| {
-                        let score_a = tier_pressure_score(**a, pressure);
-                        let score_b = tier_pressure_score(**b, pressure);
-                        score_a
-                            .partial_cmp(&score_b)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    })
-                {
+                if let Some(best) = candidates.iter().max_by(|a, b| {
+                    let score_a = tier_pressure_score(**a, pressure);
+                    let score_b = tier_pressure_score(**b, pressure);
+                    score_a
+                        .partial_cmp(&score_b)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                }) {
                     return Some(*best);
                 }
             }
@@ -251,11 +243,7 @@ impl PlacementPolicy for PressureAwarePolicy {
         None
     }
 
-    fn migration_priority(
-        &self,
-        _meta: &ChunkMeta,
-        pressure: &PressureState,
-    ) -> TransferPriority {
+    fn migration_priority(&self, _meta: &ChunkMeta, pressure: &PressureState) -> TransferPriority {
         let max = self.max_pressure(pressure);
 
         if max >= self.config.critical_pressure {

@@ -53,13 +53,15 @@ impl SimMetrics {
     /// Record a successful allocation.
     pub fn record_alloc(&self, size: usize) {
         self.alloc_count.fetch_add(1, Ordering::Relaxed);
-        self.bytes_allocated.fetch_add(size as u64, Ordering::Relaxed);
+        self.bytes_allocated
+            .fetch_add(size as u64, Ordering::Relaxed);
     }
 
     /// Record a deallocation.
     pub fn record_dealloc(&self, size: usize) {
         self.dealloc_count.fetch_add(1, Ordering::Relaxed);
-        self.bytes_deallocated.fetch_add(size as u64, Ordering::Relaxed);
+        self.bytes_deallocated
+            .fetch_add(size as u64, Ordering::Relaxed);
     }
 
     /// Record a write operation.
@@ -81,7 +83,8 @@ impl SimMetrics {
 
     /// Record simulated latency in microseconds.
     pub fn record_latency(&self, latency_us: u64) {
-        self.total_latency_us.fetch_add(latency_us, Ordering::Relaxed);
+        self.total_latency_us
+            .fetch_add(latency_us, Ordering::Relaxed);
     }
 
     /// Get the total allocation count.
@@ -141,10 +144,8 @@ impl SimMetrics {
 
     /// Get the average latency per operation in microseconds.
     pub fn avg_latency_us(&self) -> f64 {
-        let total_ops = self.alloc_count()
-            + self.dealloc_count()
-            + self.write_count()
-            + self.read_count();
+        let total_ops =
+            self.alloc_count() + self.dealloc_count() + self.write_count() + self.read_count();
         if total_ops == 0 {
             0.0
         } else {

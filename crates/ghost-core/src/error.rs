@@ -10,6 +10,10 @@ use thiserror::Error;
 /// enabling precise error handling and reporting.
 #[derive(Debug, Error)]
 pub enum GhostError {
+    /// I/O error.
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
     /// Chunk not found in any tier.
     #[error("chunk not found: {0}")]
     ChunkNotFound(String),

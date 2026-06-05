@@ -66,19 +66,22 @@ pub async fn write_frame<S: AsyncWriteExt + Unpin>(stream: &mut S, data: &[u8]) 
     let len = data.len() as u32;
 
     // Write 4-byte length prefix
-    stream.write_all(&len.to_be_bytes()).await.map_err(|e| {
-        GhostError::IpcError(format!("failed to write frame length: {}", e))
-    })?;
+    stream
+        .write_all(&len.to_be_bytes())
+        .await
+        .map_err(|e| GhostError::IpcError(format!("failed to write frame length: {}", e)))?;
 
     // Write the payload
-    stream.write_all(data).await.map_err(|e| {
-        GhostError::IpcError(format!("failed to write frame payload: {}", e))
-    })?;
+    stream
+        .write_all(data)
+        .await
+        .map_err(|e| GhostError::IpcError(format!("failed to write frame payload: {}", e)))?;
 
     // Flush to ensure data is sent
-    stream.flush().await.map_err(|e| {
-        GhostError::IpcError(format!("failed to flush frame: {}", e))
-    })?;
+    stream
+        .flush()
+        .await
+        .map_err(|e| GhostError::IpcError(format!("failed to flush frame: {}", e)))?;
 
     Ok(())
 }
@@ -89,9 +92,9 @@ pub async fn write_frame<S: AsyncWriteExt + Unpin>(stream: &mut S, data: &[u8]) 
 mod tests {
     use super::*;
 
-    use tokio::io::{duplex, AsyncRead, AsyncWrite, ReadBuf};
     use std::pin::Pin;
     use std::task::{Context, Poll};
+    use tokio::io::{duplex, AsyncRead, AsyncWrite, ReadBuf};
 
     /// A wrapper around DuplexStream that implements AsyncRead + AsyncWrite
     /// for testing frame read/write without a real Unix socket.

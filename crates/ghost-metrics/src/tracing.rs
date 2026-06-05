@@ -1,10 +1,6 @@
 //! Tracing setup module.
 
-use tracing_subscriber::{
-    filter::EnvFilter,
-    layer::SubscriberExt,
-    util::SubscriberInitExt,
-};
+use tracing_subscriber::{filter::EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Initialize the tracing subscriber with env-filter support.
 ///
@@ -27,8 +23,7 @@ use tracing_subscriber::{
 /// tracing::debug!(target: "ghost_daemon", "Daemon initialized");
 /// ```
 pub fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
@@ -68,7 +63,10 @@ pub fn init_tracing_with_filter(filter_str: &str) {
         .with(fmt_layer)
         .init();
 
-    tracing::info!(filter = filter_str, "Tracing initialized with custom filter");
+    tracing::info!(
+        filter = filter_str,
+        "Tracing initialized with custom filter"
+    );
 }
 
 #[cfg(test)]

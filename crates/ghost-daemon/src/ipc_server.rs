@@ -113,10 +113,7 @@ impl IpcServer {
             ))
         })?;
 
-        tracing::info!(
-            "IPC server listening on {}",
-            socket_path.display()
-        );
+        tracing::info!("IPC server listening on {}", socket_path.display());
 
         let mut shutdown = self.shutdown.clone();
 
@@ -266,16 +263,10 @@ async fn handle_connection(
         });
 
         // Dispatch request
-        let response = dispatch_request(
-            &request,
-            &orchestrator,
-            &trace_log,
-            start_time,
-        )
-        .await;
+        let response = dispatch_request(&request, &orchestrator, &trace_log, start_time).await;
 
         // Emit IpcResponseSent event
-        let response_type = match &response {
+        let _response_type = match &response {
             IpcResponse::Ok { .. } => "ok",
             IpcResponse::ChunkId { .. } => "chunk_id",
             IpcResponse::Error { .. } => "error",
@@ -289,7 +280,18 @@ async fn handle_connection(
         };
         trace_log.record(TraceEvent::IpcResponseSent {
             request_type: request_type.to_string(),
-            success: matches!(&response, IpcResponse::Ok { .. } | IpcResponse::ChunkId { .. } | IpcResponse::Info { .. } | IpcResponse::List { .. } | IpcResponse::Status { .. } | IpcResponse::Pressure { .. } | IpcResponse::Trace { .. } | IpcResponse::PressureCheck { .. } | IpcResponse::Pong),
+            success: matches!(
+                &response,
+                IpcResponse::Ok { .. }
+                    | IpcResponse::ChunkId { .. }
+                    | IpcResponse::Info { .. }
+                    | IpcResponse::List { .. }
+                    | IpcResponse::Status { .. }
+                    | IpcResponse::Pressure { .. }
+                    | IpcResponse::Trace { .. }
+                    | IpcResponse::PressureCheck { .. }
+                    | IpcResponse::Pong
+            ),
             timestamp: current_timestamp(),
         });
 
@@ -330,9 +332,8 @@ async fn dispatch_request(
 
 /// Send a response over the stream.
 async fn send_response(stream: &mut UnixStream, response: &IpcResponse) -> GhostResult<()> {
-    let response_json = serde_json::to_vec(response).map_err(|e| {
-        GhostError::IpcError(format!("failed to serialize response: {}", e))
-    })?;
+    let response_json = serde_json::to_vec(response)
+        .map_err(|e| GhostError::IpcError(format!("failed to serialize response: {}", e)))?;
     write_frame(stream, &response_json).await
 }
 
@@ -394,7 +395,12 @@ async fn handle_delete(
     chunk_id: &ChunkId,
 ) -> IpcResponse {
     // Evict the chunk from all tiers
-    let tiers = [TierId::Ram, TierId::Simulation, TierId::Disk, TierId::GpuVram];
+    let tiers = [
+        TierId::Ram,
+        TierId::Simulation,
+        TierId::Disk,
+        TierId::GpuVram,
+    ];
     let mut deleted = false;
 
     for tier in &tiers {
@@ -443,10 +449,7 @@ async fn handle_migrate(
     }
 }
 
-async fn handle_info(
-    orchestrator: &Arc<TransferOrchestrator>,
-    chunk_id: &ChunkId,
-) -> IpcResponse {
+async fn handle_info(orchestrator: &Arc<TransferOrchestrator>, chunk_id: &ChunkId) -> IpcResponse {
     let sm = orchestrator.state_machine.lock().unwrap();
     let state = sm.get_state(chunk_id);
 
@@ -480,7 +483,7 @@ async fn handle_list(
 
     let chunks: Vec<(ChunkId, ChunkMeta)> = stored_chunks
         .into_iter()
-        .filter(|chunk_id| {
+        .filter(|_chunk_id| {
             if let Some(tier_filter) = tier {
                 // In a real system, we'd check the chunk's actual tier
                 let _ = tier_filter;
@@ -549,9 +552,7 @@ async fn handle_trace(trace_log: &Arc<TraceLog>, count: Option<usize>) -> IpcRes
     IpcResponse::Trace { events }
 }
 
-async fn handle_pressure_check(
-    orchestrator: &Arc<TransferOrchestrator>,
-) -> IpcResponse {
+async fn handle_pressure_check(orchestrator: &Arc<TransferOrchestrator>) -> IpcResponse {
     match orchestrator.run_pressure_check() {
         Ok(migrations) => IpcResponse::PressureCheck {
             jobs_created: migrations.len(),

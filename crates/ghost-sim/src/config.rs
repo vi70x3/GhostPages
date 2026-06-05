@@ -160,9 +160,7 @@ mod tests {
 
     #[test]
     fn test_sim_config_builder() {
-        let config = SimConfig::default()
-            .with_seed(123)
-            .with_fragmentation(0.5);
+        let config = SimConfig::default().with_seed(123).with_fragmentation(0.5);
         assert_eq!(config.seed, 123);
         assert!(config.simulate_fragmentation);
         assert!((config.fragmentation_factor - 0.5).abs() < f64::EPSILON);

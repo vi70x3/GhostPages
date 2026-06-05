@@ -80,9 +80,5 @@ pub trait PlacementPolicy: Send + Sync + 'static {
     /// Calculate the priority for a migration involving this chunk.
     ///
     /// Higher priority migrations should be scheduled first.
-    fn migration_priority(
-        &self,
-        meta: &ChunkMeta,
-        pressure: &PressureState,
-    ) -> TransferPriority;
+    fn migration_priority(&self, meta: &ChunkMeta, pressure: &PressureState) -> TransferPriority;
 }

@@ -76,10 +76,7 @@ pub enum TraceEvent {
     },
 
     /// A transfer job was started.
-    TransferStarted {
-        job: TransferJob,
-        timestamp: u64,
-    },
+    TransferStarted { job: TransferJob, timestamp: u64 },
 
     /// A transfer completed successfully.
     TransferCompleted {
@@ -150,32 +147,19 @@ pub enum TraceEvent {
     },
 
     /// The daemon was started.
-    DaemonStarted {
-        timestamp: u64,
-    },
+    DaemonStarted { timestamp: u64 },
 
     /// The daemon is stopping.
-    DaemonStopping {
-        timestamp: u64,
-    },
+    DaemonStopping { timestamp: u64 },
 
     /// A storage backend was registered.
-    BackendRegistered {
-        tier: TierId,
-        timestamp: u64,
-    },
+    BackendRegistered { tier: TierId, timestamp: u64 },
 
     /// A worker was spawned.
-    WorkerSpawned {
-        worker_id: usize,
-        timestamp: u64,
-    },
+    WorkerSpawned { worker_id: usize, timestamp: u64 },
 
     /// A worker was stopped.
-    WorkerStopped {
-        worker_id: usize,
-        timestamp: u64,
-    },
+    WorkerStopped { worker_id: usize, timestamp: u64 },
 
     /// An IPC request was received.
     IpcRequestReceived {
@@ -191,14 +175,10 @@ pub enum TraceEvent {
     },
 
     /// An IPC connection was accepted.
-    IpcConnectionAccepted {
-        timestamp: u64,
-    },
+    IpcConnectionAccepted { timestamp: u64 },
 
     /// An IPC connection was closed.
-    IpcConnectionClosed {
-        timestamp: u64,
-    },
+    IpcConnectionClosed { timestamp: u64 },
 
     /// Compression started for a chunk.
     CompressionStarted {
@@ -364,45 +344,140 @@ macro_rules! trace_event {
     ($event:expr) => {{
         let ts = $crate::trace::current_timestamp();
         match $event {
-            $crate::trace::TraceEvent::ChunkCreated { chunk_id, size, tier, .. } => {
-                $crate::trace::TraceEvent::ChunkCreated { chunk_id, size, tier, timestamp: ts }
-            }
+            $crate::trace::TraceEvent::ChunkCreated {
+                chunk_id,
+                size,
+                tier,
+                ..
+            } => $crate::trace::TraceEvent::ChunkCreated {
+                chunk_id,
+                size,
+                tier,
+                timestamp: ts,
+            },
             $crate::trace::TraceEvent::ChunkDeleted { chunk_id, tier, .. } => {
-                $crate::trace::TraceEvent::ChunkDeleted { chunk_id, tier, timestamp: ts }
+                $crate::trace::TraceEvent::ChunkDeleted {
+                    chunk_id,
+                    tier,
+                    timestamp: ts,
+                }
             }
-            $crate::trace::TraceEvent::ChunkStateChanged { chunk_id, from, to, .. } => {
-                $crate::trace::TraceEvent::ChunkStateChanged { chunk_id, from, to, timestamp: ts }
-            }
-            $crate::trace::TraceEvent::TransferQueued { chunk_id, from, to, priority, .. } => {
-                $crate::trace::TraceEvent::TransferQueued { chunk_id, from, to, priority, timestamp: ts }
-            }
+            $crate::trace::TraceEvent::ChunkStateChanged {
+                chunk_id, from, to, ..
+            } => $crate::trace::TraceEvent::ChunkStateChanged {
+                chunk_id,
+                from,
+                to,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::TransferQueued {
+                chunk_id,
+                from,
+                to,
+                priority,
+                ..
+            } => $crate::trace::TraceEvent::TransferQueued {
+                chunk_id,
+                from,
+                to,
+                priority,
+                timestamp: ts,
+            },
             $crate::trace::TraceEvent::TransferStarted { job, .. } => {
                 $crate::trace::TraceEvent::TransferStarted { job, timestamp: ts }
             }
-            $crate::trace::TraceEvent::TransferCompleted { chunk_id, from, to, size, duration_ms, .. } => {
-                $crate::trace::TraceEvent::TransferCompleted { chunk_id, from, to, size, duration_ms, timestamp: ts }
-            }
-            $crate::trace::TraceEvent::TransferFailed { chunk_id, from, to, error, attempt, .. } => {
-                $crate::trace::TraceEvent::TransferFailed { chunk_id, from, to, error, attempt, timestamp: ts }
-            }
-            $crate::trace::TraceEvent::TransferRetry { chunk_id, from, to, attempt, .. } => {
-                $crate::trace::TraceEvent::TransferRetry { chunk_id, from, to, attempt, timestamp: ts }
-            }
-            $crate::trace::TraceEvent::TransferCancelled { chunk_id, from, to, .. } => {
-                $crate::trace::TraceEvent::TransferCancelled { chunk_id, from, to, timestamp: ts }
-            }
+            $crate::trace::TraceEvent::TransferCompleted {
+                chunk_id,
+                from,
+                to,
+                size,
+                duration_ms,
+                ..
+            } => $crate::trace::TraceEvent::TransferCompleted {
+                chunk_id,
+                from,
+                to,
+                size,
+                duration_ms,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::TransferFailed {
+                chunk_id,
+                from,
+                to,
+                error,
+                attempt,
+                ..
+            } => $crate::trace::TraceEvent::TransferFailed {
+                chunk_id,
+                from,
+                to,
+                error,
+                attempt,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::TransferRetry {
+                chunk_id,
+                from,
+                to,
+                attempt,
+                ..
+            } => $crate::trace::TraceEvent::TransferRetry {
+                chunk_id,
+                from,
+                to,
+                attempt,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::TransferCancelled {
+                chunk_id, from, to, ..
+            } => $crate::trace::TraceEvent::TransferCancelled {
+                chunk_id,
+                from,
+                to,
+                timestamp: ts,
+            },
             $crate::trace::TraceEvent::PressureSample { state, .. } => {
-                $crate::trace::TraceEvent::PressureSample { state, timestamp: ts }
+                $crate::trace::TraceEvent::PressureSample {
+                    state,
+                    timestamp: ts,
+                }
             }
-            $crate::trace::TraceEvent::PressureAlert { memory_pressure, vram_pressure, io_pressure, .. } => {
-                $crate::trace::TraceEvent::PressureAlert { memory_pressure, vram_pressure, io_pressure, timestamp: ts }
-            }
-            $crate::trace::TraceEvent::Eviction { chunk_id, tier, reason, .. } => {
-                $crate::trace::TraceEvent::Eviction { chunk_id, tier, reason, timestamp: ts }
-            }
-            $crate::trace::TraceEvent::PolicyDecision { chunk_id, from, to, reason, .. } => {
-                $crate::trace::TraceEvent::PolicyDecision { chunk_id, from, to, reason, timestamp: ts }
-            }
+            $crate::trace::TraceEvent::PressureAlert {
+                memory_pressure,
+                vram_pressure,
+                io_pressure,
+                ..
+            } => $crate::trace::TraceEvent::PressureAlert {
+                memory_pressure,
+                vram_pressure,
+                io_pressure,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::Eviction {
+                chunk_id,
+                tier,
+                reason,
+                ..
+            } => $crate::trace::TraceEvent::Eviction {
+                chunk_id,
+                tier,
+                reason,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::PolicyDecision {
+                chunk_id,
+                from,
+                to,
+                reason,
+                ..
+            } => $crate::trace::TraceEvent::PolicyDecision {
+                chunk_id,
+                from,
+                to,
+                reason,
+                timestamp: ts,
+            },
             $crate::trace::TraceEvent::DaemonStarted { .. } => {
                 $crate::trace::TraceEvent::DaemonStarted { timestamp: ts }
             }
@@ -410,38 +485,84 @@ macro_rules! trace_event {
                 $crate::trace::TraceEvent::DaemonStopping { timestamp: ts }
             }
             $crate::trace::TraceEvent::BackendRegistered { tier, .. } => {
-                $crate::trace::TraceEvent::BackendRegistered { tier, timestamp: ts }
+                $crate::trace::TraceEvent::BackendRegistered {
+                    tier,
+                    timestamp: ts,
+                }
             }
             $crate::trace::TraceEvent::WorkerSpawned { worker_id, .. } => {
-                $crate::trace::TraceEvent::WorkerSpawned { worker_id, timestamp: ts }
+                $crate::trace::TraceEvent::WorkerSpawned {
+                    worker_id,
+                    timestamp: ts,
+                }
             }
             $crate::trace::TraceEvent::WorkerStopped { worker_id, .. } => {
-                $crate::trace::TraceEvent::WorkerStopped { worker_id, timestamp: ts }
+                $crate::trace::TraceEvent::WorkerStopped {
+                    worker_id,
+                    timestamp: ts,
+                }
             }
             $crate::trace::TraceEvent::IpcRequestReceived { request_type, .. } => {
-                $crate::trace::TraceEvent::IpcRequestReceived { request_type, timestamp: ts }
+                $crate::trace::TraceEvent::IpcRequestReceived {
+                    request_type,
+                    timestamp: ts,
+                }
             }
-            $crate::trace::TraceEvent::IpcResponseSent { request_type, success, .. } => {
-                $crate::trace::TraceEvent::IpcResponseSent { request_type, success, timestamp: ts }
-            }
+            $crate::trace::TraceEvent::IpcResponseSent {
+                request_type,
+                success,
+                ..
+            } => $crate::trace::TraceEvent::IpcResponseSent {
+                request_type,
+                success,
+                timestamp: ts,
+            },
             $crate::trace::TraceEvent::IpcConnectionAccepted { .. } => {
                 $crate::trace::TraceEvent::IpcConnectionAccepted { timestamp: ts }
             }
             $crate::trace::TraceEvent::IpcConnectionClosed { .. } => {
                 $crate::trace::TraceEvent::IpcConnectionClosed { timestamp: ts }
             }
-            $crate::trace::TraceEvent::CompressionStarted { chunk_id, original_size, .. } => {
-                $crate::trace::TraceEvent::CompressionStarted { chunk_id, original_size, timestamp: ts }
-            }
-            $crate::trace::TraceEvent::CompressionCompleted { chunk_id, original_size, compressed_size, .. } => {
-                $crate::trace::TraceEvent::CompressionCompleted { chunk_id, original_size, compressed_size, timestamp: ts }
-            }
-            $crate::trace::TraceEvent::DecompressionStarted { chunk_id, compressed_size, .. } => {
-                $crate::trace::TraceEvent::DecompressionStarted { chunk_id, compressed_size, timestamp: ts }
-            }
-            $crate::trace::TraceEvent::DecompressionCompleted { chunk_id, compressed_size, decompressed_size, .. } => {
-                $crate::trace::TraceEvent::DecompressionCompleted { chunk_id, compressed_size, decompressed_size, timestamp: ts }
-            }
+            $crate::trace::TraceEvent::CompressionStarted {
+                chunk_id,
+                original_size,
+                ..
+            } => $crate::trace::TraceEvent::CompressionStarted {
+                chunk_id,
+                original_size,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::CompressionCompleted {
+                chunk_id,
+                original_size,
+                compressed_size,
+                ..
+            } => $crate::trace::TraceEvent::CompressionCompleted {
+                chunk_id,
+                original_size,
+                compressed_size,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::DecompressionStarted {
+                chunk_id,
+                compressed_size,
+                ..
+            } => $crate::trace::TraceEvent::DecompressionStarted {
+                chunk_id,
+                compressed_size,
+                timestamp: ts,
+            },
+            $crate::trace::TraceEvent::DecompressionCompleted {
+                chunk_id,
+                compressed_size,
+                decompressed_size,
+                ..
+            } => $crate::trace::TraceEvent::DecompressionCompleted {
+                chunk_id,
+                compressed_size,
+                decompressed_size,
+                timestamp: ts,
+            },
         }
     }};
 }
@@ -618,7 +739,8 @@ mod tests {
         };
 
         let serialized = serde_json::to_string(&event).expect("serialize trace event");
-        let deserialized: TraceEvent = serde_json::from_str(&serialized).expect("deserialize trace event");
+        let deserialized: TraceEvent =
+            serde_json::from_str(&serialized).expect("deserialize trace event");
 
         assert_eq!(event.timestamp(), deserialized.timestamp());
         assert_eq!(event.chunk_id(), deserialized.chunk_id());
@@ -913,8 +1035,7 @@ mod tests {
         ];
 
         for event in &events {
-            let serialized =
-                serde_json::to_string(event).expect("serialize trace event");
+            let serialized = serde_json::to_string(event).expect("serialize trace event");
             let deserialized: TraceEvent =
                 serde_json::from_str(&serialized).expect("deserialize trace event");
             assert_eq!(event.timestamp(), deserialized.timestamp());

@@ -9,7 +9,6 @@ use std::sync::Arc;
 use ghost_core::error::{GhostError, GhostResult};
 use ghost_core::trace::{current_timestamp, TraceEvent};
 use ghost_core::transfer::{TransferJob, TransferPriority};
-use ghost_core::types::ChunkId;
 
 use parking_lot::Mutex;
 use tokio::sync::Notify;
@@ -211,7 +210,7 @@ impl Default for TransferQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ghost_core::types::TierId;
+    use ghost_core::types::{ChunkId, TierId};
 
     fn test_trace_log() -> Arc<TraceLog> {
         Arc::new(TraceLog::new(1000))
@@ -279,8 +278,7 @@ mod tests {
         // Submit in order: Normal, Low, Critical, High
         q.submit(make_job(b"normal1", TransferPriority::Normal))
             .unwrap();
-        q.submit(make_job(b"low1", TransferPriority::Low))
-            .unwrap();
+        q.submit(make_job(b"low1", TransferPriority::Low)).unwrap();
         q.submit(make_job(b"critical1", TransferPriority::Critical))
             .unwrap();
         q.submit(make_job(b"high1", TransferPriority::High))
@@ -404,15 +402,20 @@ mod tests {
 
         // Submit multiple of each priority
         for i in 0..3 {
-            q.submit(make_job(format!("normal{}", i).as_bytes(), TransferPriority::Normal))
-                .unwrap();
+            q.submit(make_job(
+                format!("normal{}", i).as_bytes(),
+                TransferPriority::Normal,
+            ))
+            .unwrap();
         }
         for i in 0..2 {
-            q.submit(make_job(format!("critical{}", i).as_bytes(), TransferPriority::Critical))
-                .unwrap();
-        }
-        q.submit(make_job(b"low1", TransferPriority::Low))
+            q.submit(make_job(
+                format!("critical{}", i).as_bytes(),
+                TransferPriority::Critical,
+            ))
             .unwrap();
+        }
+        q.submit(make_job(b"low1", TransferPriority::Low)).unwrap();
 
         // All criticals first
         let j1 = q.try_dequeue().unwrap();
@@ -443,6 +446,8 @@ mod tests {
         q.submit(job).unwrap();
 
         let events = trace_log.get_events();
-        assert!(events.iter().any(|e| matches!(e, TraceEvent::TransferQueued { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, TraceEvent::TransferQueued { .. })));
     }
 }

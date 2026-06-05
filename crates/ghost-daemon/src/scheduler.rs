@@ -9,10 +9,9 @@
 use std::sync::Arc;
 
 use ghost_core::error::{GhostError, GhostResult};
-use ghost_core::state::{ChunkState, PressureState, StateMachine};
+use ghost_core::state::{PressureState, StateMachine};
 use ghost_core::trace::{current_timestamp, TraceEvent};
 use ghost_core::transfer::{TransferJob, TransferPriority, TransferState};
-use ghost_core::types::ChunkId;
 use ghost_policy::PlacementPolicy;
 
 use tokio::sync::mpsc;
@@ -26,9 +25,13 @@ use crate::trace_log::TraceLog;
 /// The transfer scheduler dequeues jobs and dispatches them to workers.
 pub struct TransferScheduler {
     queue: Arc<TransferQueue>,
+    #[expect(dead_code)]
     policy: Arc<dyn PlacementPolicy>,
+    // State machine is accessed via the orchestrator; scheduler no longer validates transitions.
+    #[expect(dead_code)]
     state_machine: Arc<std::sync::Mutex<StateMachine>>,
     trace_log: Arc<TraceLog>,
+    #[expect(dead_code)]
     config: SchedulerConfig,
     metrics: Arc<TransferMetrics>,
     pressure_rx: watch::Receiver<PressureState>,
@@ -39,6 +42,7 @@ impl TransferScheduler {
     pub fn new(
         queue: Arc<TransferQueue>,
         policy: Arc<dyn PlacementPolicy>,
+        // State machine is accessed via the orchestrator; scheduler no longer validates transitions.
         state_machine: Arc<std::sync::Mutex<StateMachine>>,
         trace_log: Arc<TraceLog>,
         config: SchedulerConfig,
@@ -75,10 +79,11 @@ impl TransferScheduler {
                     // Update queue depth metric
                     self.metrics.set_queue_depth(self.queue.depth() as u64);
 
+
                     // Check pressure before dispatching
-                    let pressure = self.pressure_rx.borrow().clone();
-                    if self.should_throttle(&job, &pressure) {
-                        tracing::debug!(
+                    let pressure = *self.pressure_rx.borrow();
+                                        if self.should_throttle(&job, &pressure) {
+                                                tracing::debug!(
                             "Throttling job {:?} due to pressure {:.2}",
                             job.chunk_id,
                             pressure.max_pressure()
@@ -94,8 +99,8 @@ impl TransferScheduler {
                     }
 
                     // Validate and dispatch
-                    if let Err(e) = self.dispatch_job(job, &worker_tx) {
-                        tracing::warn!("Failed to dispatch job: {}", e);
+                                        if let Err(e) = self.dispatch_job(job, &worker_tx) {
+                                                tracing::warn!("Failed to dispatch job: {}", e);
                     }
                 }
                 _ = shutdown_rx.changed() => {
@@ -136,69 +141,15 @@ impl TransferScheduler {
     }
 
     /// Dispatch a single job to a worker.
+    ///
+    /// Note: State machine transitions are handled by the orchestrator
+    /// before job submission. The scheduler only validates that the job
+    /// is in an appropriate state and sends it to a worker.
     fn dispatch_job(
         &self,
         mut job: TransferJob,
         worker_tx: &mpsc::Sender<TransferJob>,
     ) -> GhostResult<()> {
-        // Validate state machine transition
-        {
-            let mut sm = self.state_machine.lock().unwrap();
-            let current_state = sm.get_state(&job.chunk_id);
-
-            match current_state {
-                Some(ChunkState::Stored) | Some(ChunkState::Cached) => {
-                    // Valid source states for migration
-                    sm.transition(&job.chunk_id, ChunkState::Migrating)?;
-                    self.trace_log.record(TraceEvent::ChunkStateChanged {
-                        chunk_id: job.chunk_id,
-                        from: current_state.unwrap(),
-                        to: ChunkState::Migrating,
-                        timestamp: current_timestamp(),
-                    });
-                }
-                Some(ChunkState::Failed) => {
-                    // Retry: Failed → Migrating is not valid, go through Stored first
-                    sm.transition(&job.chunk_id, ChunkState::Stored)?;
-                    sm.transition(&job.chunk_id, ChunkState::Migrating)?;
-                    self.trace_log.record(TraceEvent::ChunkStateChanged {
-                        chunk_id: job.chunk_id,
-                        from: ChunkState::Failed,
-                        to: ChunkState::Migrating,
-                        timestamp: current_timestamp(),
-                    });
-                }
-                Some(ChunkState::Allocated) => {
-                    // New chunk being stored — transition to Stored first
-                    sm.transition(&job.chunk_id, ChunkState::Stored)?;
-                    // If the target is different from source, migrate
-                    if job.from_tier != job.to_tier {
-                        sm.transition(&job.chunk_id, ChunkState::Migrating)?;
-                    }
-                    self.trace_log.record(TraceEvent::ChunkStateChanged {
-                        chunk_id: job.chunk_id,
-                        from: ChunkState::Allocated,
-                        to: ChunkState::Migrating,
-                        timestamp: current_timestamp(),
-                    });
-                }
-                Some(state) => {
-                    return Err(GhostError::InvalidStateTransition {
-                        from: format!("{:?}", state),
-                        to: "Migrating".to_string(),
-                    });
-                }
-                None => {
-                    // Chunk not registered — register it
-                    sm.register(job.chunk_id)?;
-                    if job.from_tier != job.to_tier {
-                        sm.transition(&job.chunk_id, ChunkState::Stored)?;
-                        sm.transition(&job.chunk_id, ChunkState::Migrating)?;
-                    }
-                }
-            }
-        }
-
         // Update job state
         job.transition_state(TransferState::Queued);
 
@@ -241,6 +192,7 @@ impl TransferScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ghost_core::state::ChunkState;
     use ghost_core::types::ChunkId;
 
     use ghost_policy::{LruConfig, LruPolicy, PlacementPolicy};
@@ -254,7 +206,15 @@ mod tests {
         let metrics = Arc::new(TransferMetrics::new());
         let (_pressure_tx, pressure_rx) = watch::channel(PressureState::new());
 
-        TransferScheduler::new(queue, policy, state_machine, trace_log, config, metrics, pressure_rx)
+        TransferScheduler::new(
+            queue,
+            policy,
+            state_machine,
+            trace_log,
+            config,
+            metrics,
+            pressure_rx,
+        )
     }
 
     #[tokio::test]

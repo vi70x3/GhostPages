@@ -13,9 +13,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::backend::{
-    Allocation, BackendData, BackendError, StorageBackend,
-};
+use crate::backend::{Allocation, BackendData, BackendError, StorageBackend};
 
 /// RAM-based storage backend.
 ///
@@ -110,11 +108,7 @@ impl StorageBackend for RamBackend {
         *next_offset += size;
         *used += size;
 
-        Ok(Allocation::new(
-            offset,
-            size,
-            BackendData::new(size),
-        ))
+        Ok(Allocation::new(offset, size, BackendData::new(size)))
     }
 
     async fn deallocate(&self, allocation: Allocation) -> Result<(), BackendError> {
@@ -142,11 +136,7 @@ impl StorageBackend for RamBackend {
         Ok(())
     }
 
-    async fn read(
-        &self,
-        allocation: &Allocation,
-        buf: &mut [u8],
-    ) -> Result<(), BackendError> {
+    async fn read(&self, allocation: &Allocation, buf: &mut [u8]) -> Result<(), BackendError> {
         if buf.len() > allocation.size {
             return Err(BackendError::ReadFailed(format!(
                 "buffer size {} exceeds allocation size {}",
@@ -214,8 +204,6 @@ impl StorageBackend for RamBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ghost_core::types::ChunkId;
-
     #[tokio::test]
     async fn test_ram_backend_basic_store_and_retrieve() {
         let backend = RamBackend::new(1024);
@@ -244,7 +232,7 @@ mod tests {
         let alloc1 = backend.allocate(100).await.unwrap();
         assert_eq!(backend.available(), 156);
 
-        let alloc2 = backend.allocate(100).await.unwrap();
+        let _alloc2 = backend.allocate(100).await.unwrap();
         assert_eq!(backend.available(), 56);
 
         // Should fail: only 56 bytes left
@@ -282,10 +270,7 @@ mod tests {
         // Wrong hash should fail
         let wrong_hash = [0u8; 32];
         let result = backend.verify_integrity(&alloc, &wrong_hash).await;
-        assert!(matches!(
-            result,
-            Err(BackendError::IntegrityFailed { .. })
-        ));
+        assert!(matches!(result, Err(BackendError::IntegrityFailed { .. })));
     }
 
     #[tokio::test]
@@ -328,9 +313,6 @@ mod tests {
         let alloc = backend.allocate(10).await.unwrap();
         let data = vec![0u8; 20];
         let result = backend.write(&alloc, &data).await;
-        assert!(matches!(
-            result,
-            Err(BackendError::WriteFailed(_))
-        ));
+        assert!(matches!(result, Err(BackendError::WriteFailed(_))));
     }
 }

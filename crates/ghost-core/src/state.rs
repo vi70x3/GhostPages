@@ -74,10 +74,7 @@ impl ChunkState {
             {
                 let from = format!("{:?}", self);
                 let to = format!("{:?}", next);
-                eprintln!(
-                    "Invalid chunk state transition: {:?} -> {:?}",
-                    self, next
-                );
+                eprintln!("Invalid chunk state transition: {:?} -> {:?}", self, next);
                 Err(GhostError::InvalidStateTransition { from, to })
             }
         }
@@ -209,10 +206,7 @@ impl StateMachine {
     /// Returns [`GhostError::Internal`] if the chunk is not registered.
     pub fn transition(&mut self, chunk_id: &ChunkId, next: ChunkState) -> GhostResult<ChunkState> {
         let current = self.states.get(chunk_id).ok_or_else(|| {
-            GhostError::Internal(format!(
-                "chunk {} not found in state machine",
-                chunk_id
-            ))
+            GhostError::Internal(format!("chunk {} not found in state machine", chunk_id))
         })?;
         current.transition_to(next)?;
         self.states.insert(*chunk_id, next);

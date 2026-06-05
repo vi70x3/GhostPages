@@ -160,7 +160,7 @@ pub struct TransferJob {
 impl Serialize for TransferJob {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
-        let mut map = serializer.serialize_map(Some(7))?;
+        let mut map = serializer.serialize_map(Some(8))?;
         map.serialize_entry("chunk_id", &self.chunk_id)?;
         map.serialize_entry("from_tier", &self.from_tier)?;
         map.serialize_entry("to_tier", &self.to_tier)?;
@@ -207,7 +207,9 @@ impl<'de> Deserialize<'de> for TransferJob {
                         "state" => state = Some(map.next_value()?),
                         "created_at_secs" => created_at_secs = Some(map.next_value()?),
                         "attempts" => attempts = Some(map.next_value()?),
-                        _ => { let _: serde::de::IgnoredAny = map.next_value()?; }
+                        _ => {
+                            let _: serde::de::IgnoredAny = map.next_value()?;
+                        }
                     }
                 }
 
@@ -217,7 +219,8 @@ impl<'de> Deserialize<'de> for TransferJob {
                 let size = size.ok_or_else(|| de::Error::missing_field("size"))?;
                 let priority = priority.ok_or_else(|| de::Error::missing_field("priority"))?;
                 let state = state.ok_or_else(|| de::Error::missing_field("state"))?;
-                let created_at_secs = created_at_secs.ok_or_else(|| de::Error::missing_field("created_at_secs"))?;
+                let created_at_secs =
+                    created_at_secs.ok_or_else(|| de::Error::missing_field("created_at_secs"))?;
                 let attempts = attempts.ok_or_else(|| de::Error::missing_field("attempts"))?;
 
                 // Reconstruct Instant from seconds since epoch
@@ -483,7 +486,8 @@ mod tests {
         );
 
         let serialized = serde_json::to_string(&job).expect("serialize transfer job");
-        let deserialized: TransferJob = serde_json::from_str(&serialized).expect("deserialize transfer job");
+        let deserialized: TransferJob =
+            serde_json::from_str(&serialized).expect("deserialize transfer job");
 
         assert_eq!(job.chunk_id, deserialized.chunk_id);
         assert_eq!(job.from_tier, deserialized.from_tier);

@@ -30,6 +30,7 @@ pub struct WorkerPool {
     trace_log: Arc<TraceLog>,
     metrics: Arc<TransferMetrics>,
     active_workers: Arc<AtomicU64>,
+    state_machine: Arc<std::sync::Mutex<ghost_core::state::StateMachine>>,
 }
 
 impl WorkerPool {
@@ -39,6 +40,7 @@ impl WorkerPool {
         backends: HashMap<TierId, Arc<dyn StorageBackend>>,
         trace_log: Arc<TraceLog>,
         metrics: Arc<TransferMetrics>,
+        state_machine: Arc<std::sync::Mutex<ghost_core::state::StateMachine>>,
     ) -> Self {
         Self {
             config,
@@ -46,6 +48,7 @@ impl WorkerPool {
             trace_log,
             metrics,
             active_workers: Arc::new(AtomicU64::new(0)),
+            state_machine,
         }
     }
 
@@ -55,10 +58,7 @@ impl WorkerPool {
     pub fn start(
         &self,
         shutdown_rx: tokio::sync::watch::Receiver<bool>,
-    ) -> (
-        mpsc::Sender<TransferJob>,
-        Vec<tokio::task::JoinHandle<()>>,
-    ) {
+    ) -> (mpsc::Sender<TransferJob>, Vec<tokio::task::JoinHandle<()>>) {
         let (tx, rx) = mpsc::channel::<TransferJob>(self.config.worker_count * 2);
         let mut handles = Vec::with_capacity(self.config.worker_count);
 
@@ -70,6 +70,7 @@ impl WorkerPool {
             let trace_log = self.trace_log.clone();
             let metrics = self.metrics.clone();
             let active_workers = self.active_workers.clone();
+            let state_machine = self.state_machine.clone();
             let max_retries = self.config.max_retries;
             let retry_base_delay_ms = self.config.retry_base_delay_ms;
             let max_retry_delay_ms = self.config.max_retry_delay_ms;
@@ -101,6 +102,7 @@ impl WorkerPool {
                                 &mut job,
                                 &backends,
                                 &trace_log,
+                                state_machine.clone(),
                                 max_retries,
                                 retry_base_delay_ms,
                                 max_retry_delay_ms,
@@ -112,6 +114,18 @@ impl WorkerPool {
                             match result {
                                 Ok(()) => {
                                     metrics.record_completion();
+                                    // After successful cross-tier migration,
+                                    // transition chunk from Migrating to Stored
+                                    if job.from_tier != job.to_tier {
+                                        let mut sm = state_machine.lock().unwrap();
+                                        let _ = sm.transition(&job.chunk_id, ChunkState::Stored);
+                                        trace_log.record(TraceEvent::ChunkStateChanged {
+                                            chunk_id: job.chunk_id,
+                                            from: ChunkState::Migrating,
+                                            to: ChunkState::Stored,
+                                            timestamp: current_timestamp(),
+                                        });
+                                    }
                                 }
                                 Err(GhostError::Cancelled) => {
                                     metrics.record_cancellation();
@@ -169,10 +183,12 @@ impl WorkerPool {
     }
 
     /// Execute a single transfer job with retry logic.
+    #[allow(clippy::too_many_arguments)]
     async fn execute_transfer(
         job: &mut TransferJob,
         backends: &HashMap<TierId, Arc<dyn StorageBackend>>,
         trace_log: &TraceLog,
+        _state_machine: Arc<std::sync::Mutex<ghost_core::state::StateMachine>>,
         max_retries: u32,
         retry_base_delay_ms: u64,
         max_retry_delay_ms: u64,
@@ -218,9 +234,9 @@ impl WorkerPool {
                 timestamp: current_timestamp(),
             });
 
-            let source = backends.get(&job.from_tier).ok_or_else(|| {
-                GhostError::TierUnavailable(job.from_tier)
-            })?;
+            let source = backends
+                .get(&job.from_tier)
+                .ok_or(GhostError::TierUnavailable(job.from_tier))?;
 
             // For the transfer, we need to read the data.
             // In a real system, we'd look up the allocation from a chunk table.
@@ -252,9 +268,9 @@ impl WorkerPool {
 
             // Step 3: Write to target
             job.transition_state(TransferState::Writing);
-            let target = backends.get(&job.to_tier).ok_or_else(|| {
-                GhostError::TierUnavailable(job.to_tier)
-            })?;
+            let target = backends
+                .get(&job.to_tier)
+                .ok_or(GhostError::TierUnavailable(job.to_tier))?;
 
             if let Err(e) = Self::write_to_backend(target, &payload).await {
                 last_error = Some(GhostError::BackendError(e.to_string()));
@@ -326,10 +342,7 @@ impl WorkerPool {
     }
 
     /// Write data to a backend.
-    async fn write_to_backend(
-        backend: &Arc<dyn StorageBackend>,
-        data: &[u8],
-    ) -> GhostResult<()> {
+    async fn write_to_backend(backend: &Arc<dyn StorageBackend>, data: &[u8]) -> GhostResult<()> {
         let alloc = backend
             .allocate(data.len())
             .await
@@ -380,7 +393,8 @@ mod tests {
         );
         backends.insert(
             TierId::Simulation,
-            Arc::new(RamBackend::with_id(TierId::Simulation, 1024 * 1024)) as Arc<dyn StorageBackend>,
+            Arc::new(RamBackend::with_id(TierId::Simulation, 1024 * 1024))
+                as Arc<dyn StorageBackend>,
         );
         backends
     }
@@ -392,7 +406,13 @@ mod tests {
         let trace_log = Arc::new(TraceLog::new(1000));
         let metrics = Arc::new(TransferMetrics::new());
 
-        let pool = WorkerPool::new(config, backends, trace_log.clone(), metrics.clone());
+        let pool = WorkerPool::new(
+            config,
+            backends,
+            trace_log.clone(),
+            metrics.clone(),
+            Arc::new(std::sync::Mutex::new(ghost_core::state::StateMachine::new())),
+        );
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let (job_tx, handles) = pool.start(shutdown_rx);
@@ -417,9 +437,15 @@ mod tests {
         // Check trace log
         let events = trace_log.get_events();
         assert!(!events.is_empty());
-        assert!(events.iter().any(|e| matches!(e, TraceEvent::TransferStarted { .. })));
-        assert!(events.iter().any(|e| matches!(e, TraceEvent::TransferCompleted { .. })));
-        assert!(events.iter().any(|e| matches!(e, TraceEvent::WorkerSpawned { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, TraceEvent::TransferStarted { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, TraceEvent::TransferCompleted { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, TraceEvent::WorkerSpawned { .. })));
 
         // Shutdown
         shutdown_tx.send(true).unwrap();
@@ -436,7 +462,13 @@ mod tests {
         let trace_log = Arc::new(TraceLog::new(1000));
         let metrics = Arc::new(TransferMetrics::new());
 
-        let pool = WorkerPool::new(config, backends, trace_log, metrics);
+        let pool = WorkerPool::new(
+            config,
+            backends,
+            trace_log,
+            metrics,
+            Arc::new(std::sync::Mutex::new(ghost_core::state::StateMachine::new())),
+        );
 
         let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let (_job_tx, _handles) = pool.start(shutdown_rx);
@@ -452,7 +484,13 @@ mod tests {
         let trace_log = Arc::new(TraceLog::new(1000));
         let metrics = Arc::new(TransferMetrics::new());
 
-        let pool = WorkerPool::new(config, backends, trace_log, metrics);
+        let pool = WorkerPool::new(
+            config,
+            backends,
+            trace_log,
+            metrics,
+            Arc::new(std::sync::Mutex::new(ghost_core::state::StateMachine::new())),
+        );
         assert_eq!(pool.active_worker_count(), 0);
     }
 }

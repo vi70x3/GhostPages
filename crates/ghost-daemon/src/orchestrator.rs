@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use ghost_core::emitter::EventEmitter;
 use ghost_core::error::{GhostError, GhostResult};
+use ghost_core::events::Event;
 use ghost_core::state::{ChunkState, PressureState, StateMachine};
 use ghost_core::trace::{current_timestamp, TraceEvent};
 use ghost_core::transfer::{TransferJob, TransferPriority};
@@ -58,6 +60,8 @@ pub struct TransferOrchestrator {
     backpressure_controller: Arc<BackpressureController>,
     /// Instant when the orchestrator was created (for uptime tracking).
     start_time: Instant,
+    /// Optional event emitter for unified event taxonomy.
+    event_emitter: Option<EventEmitter>,
 }
 
 impl TransferOrchestrator {
@@ -150,7 +154,13 @@ impl TransferOrchestrator {
             migration_engine,
             backpressure_controller,
             start_time: Instant::now(),
+            event_emitter: None,
         }
+    }
+
+    /// Set the event emitter for unified event taxonomy.
+    pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
+        self.event_emitter = Some(emitter);
     }
 
     /// Start the orchestrator, spawning the scheduler and worker pool.
@@ -378,6 +388,15 @@ impl TransferOrchestrator {
             timestamp: current_timestamp(),
         });
 
+        // Emit unified event
+        if let Some(ref emitter) = self.event_emitter {
+            let _ = emitter.try_emit(Event::AllocationCreated {
+                chunk_id,
+                tier,
+                size: data.len(),
+            });
+        }
+
         // For store, we use a same-tier "transfer" that just writes to the backend
         let job = TransferJob::new(chunk_id, tier, tier, data.len(), TransferPriority::Normal);
         self.submit_job(job)
@@ -464,6 +483,16 @@ impl TransferOrchestrator {
         };
 
         let job = TransferJob::new(chunk_id, from_tier, to_tier, size, priority);
+
+        // Emit unified event
+        if let Some(ref emitter) = self.event_emitter {
+            let _ = emitter.try_emit(Event::MigrationStarted {
+                chunk_id,
+                from: from_tier,
+                to: to_tier,
+            });
+        }
+
         self.submit_job(job)
     }
 
@@ -504,6 +533,11 @@ impl TransferOrchestrator {
             reason: ghost_core::trace::EvictionReason::Manual,
             timestamp: current_timestamp(),
         });
+
+        // Emit unified event
+        if let Some(ref emitter) = self.event_emitter {
+            let _ = emitter.try_emit(Event::AllocationFreed { chunk_id, tier });
+        }
 
         tracing::info!("Evicted chunk {:?} from tier {:?}", chunk_id, tier);
         Ok(())

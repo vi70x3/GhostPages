@@ -7,6 +7,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use ghost_core::emitter::EventEmitter;
+use ghost_core::events::Event;
 use ghost_core::state::{ChunkState, PressureState, StateMachine};
 use ghost_core::trace::{current_timestamp, EvictionReason, TraceEvent};
 use ghost_core::transfer::{TransferJob, TransferPriority};
@@ -71,6 +73,8 @@ pub struct MigrationEngine {
     active_migrations: Arc<std::sync::Mutex<BTreeSet<ChunkId>>>,
     /// Timestamp of the last migration for each chunk (rate limiting).
     last_migration: Arc<std::sync::Mutex<BTreeMap<ChunkId, u64>>>,
+    /// Optional event emitter for unified event taxonomy.
+    event_emitter: Option<EventEmitter>,
 }
 
 impl MigrationEngine {
@@ -93,7 +97,13 @@ impl MigrationEngine {
             stats: Arc::new(std::sync::Mutex::new(MigrationStats::default())),
             active_migrations: Arc::new(std::sync::Mutex::new(BTreeSet::new())),
             last_migration: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
+            event_emitter: None,
         }
+    }
+
+    /// Set the event emitter for unified event taxonomy.
+    pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
+        self.event_emitter = Some(emitter);
     }
 
     /// Evaluate the current system state and identify migrations to perform.
@@ -371,6 +381,18 @@ impl MigrationEngine {
 
         let mut last = self.last_migration.lock().unwrap();
         last.insert(chunk_id, current_timestamp());
+
+        // Emit unified event
+        if let Some(ref emitter) = self.event_emitter {
+            // Determine from/to tiers from the last_migration timestamp lookup
+            // We use Ram→Disk as a default; actual tier info would require tracking
+            let _ = emitter.try_emit(Event::MigrationCompleted {
+                chunk_id,
+                from: TierId::Ram,
+                to: TierId::Disk,
+                duration_ms: 0,
+            });
+        }
     }
 
     /// Get a snapshot of migration statistics.

@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use ghost_core::emitter::EventEmitter;
 use ghost_core::state::ChunkState;
 use ghost_core::trace::TraceEvent;
 use ghost_core::types::ChunkId;
@@ -83,6 +84,8 @@ pub trait ReplayInvariant: Send + Sync {
 #[derive(Default)]
 pub struct InvariantValidator {
     invariants: Vec<Box<dyn ReplayInvariant>>,
+    /// Optional event emitter for unified event taxonomy.
+    event_emitter: Option<EventEmitter>,
 }
 
 impl InvariantValidator {
@@ -90,7 +93,13 @@ impl InvariantValidator {
     pub fn new() -> Self {
         Self {
             invariants: Vec::new(),
+            event_emitter: None,
         }
+    }
+
+    /// Set the event emitter for unified event taxonomy.
+    pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
+        self.event_emitter = Some(emitter);
     }
 
     /// Creates a validator with all built-in invariants registered.

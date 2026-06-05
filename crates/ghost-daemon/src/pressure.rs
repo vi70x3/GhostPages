@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ghost_core::emitter::EventEmitter;
+use ghost_core::events::Event;
 use ghost_core::state::PressureState;
 use ghost_core::trace::TraceEvent;
 use ghost_core::types::TierId;
@@ -207,6 +209,8 @@ pub struct PressureMonitor {
     history: Arc<Mutex<PressureHistory>>,
     smoothed: Arc<Mutex<PressureState>>,
     trace_log: Arc<TraceLog>,
+    /// Optional event emitter for unified event taxonomy.
+    event_emitter: Option<EventEmitter>,
 }
 
 impl PressureMonitor {
@@ -221,7 +225,13 @@ impl PressureMonitor {
             history: Arc::new(Mutex::new(PressureHistory::new(history_size))),
             smoothed: Arc::new(Mutex::new(PressureState::new())),
             trace_log,
+            event_emitter: None,
         }
+    }
+
+    /// Set the event emitter for unified event taxonomy.
+    pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
+        self.event_emitter = Some(emitter);
     }
 
     /// Get a reference to the pressure history.
@@ -387,6 +397,13 @@ impl PressureMonitor {
                     .map(|(t, p)| format!("{:?}: {:.2}", t, p.max_pressure()))
                     .collect::<Vec<_>>()
             );
+            // Emit backpressure event for critical tier
+            if let Some(ref emitter) = self.event_emitter {
+                let _ = emitter.try_emit(Event::BackpressureActivated {
+                    tier: TierId::Ram,
+                    level: format!("critical: {:.2}", raw_global.max_pressure()),
+                });
+            }
         } else if raw_global.is_under_pressure() {
             tracing::info!(
                 "System under pressure: max={:.2}",

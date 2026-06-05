@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use ghost_core::emitter::EventEmitter;
+use ghost_core::events::{BackendHealth as CoreBackendHealth, Event};
 use ghost_core::types::TierId;
 
 /// Health status of a storage backend.
@@ -75,6 +77,8 @@ pub struct HealthTracker {
     last_failure: BTreeMap<TierId, Instant>,
     recovery_successes: BTreeMap<TierId, AtomicU64>,
     config: HealthConfig,
+    /// Optional event emitter for unified event taxonomy.
+    event_emitter: Option<EventEmitter>,
 }
 
 impl HealthTracker {
@@ -86,7 +90,13 @@ impl HealthTracker {
             last_failure: BTreeMap::new(),
             recovery_successes: BTreeMap::new(),
             config,
+            event_emitter: None,
         }
+    }
+
+    /// Set the event emitter for unified event taxonomy.
+    pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
+        self.event_emitter = Some(emitter);
     }
 
     /// Create a new health tracker with default configuration.
@@ -116,12 +126,36 @@ impl HealthTracker {
         let failures = count.fetch_add(1, Ordering::Relaxed) + 1;
         self.last_failure.insert(tier, Instant::now());
 
+        let old_state = self.states.get(&tier).copied();
         let state = self.states.entry(tier).or_insert(BackendHealth::Healthy);
+        let prev = *state;
 
         if failures >= self.config.unavailable_threshold {
             *state = BackendHealth::Unavailable;
         } else if failures >= self.config.degraded_threshold {
             *state = BackendHealth::Degraded;
+        }
+
+        let new_state = *state;
+        if prev != new_state {
+            if let Some(ref emitter) = self.event_emitter {
+                let old_core = old_state.map(|s| match s {
+                    BackendHealth::Healthy => CoreBackendHealth::Healthy,
+                    BackendHealth::Degraded => CoreBackendHealth::Degraded,
+                    BackendHealth::Unavailable => CoreBackendHealth::Unavailable,
+                    BackendHealth::Recovering => CoreBackendHealth::Recovering,
+                });
+                let new_core = match new_state {
+                    BackendHealth::Degraded => CoreBackendHealth::Degraded,
+                    BackendHealth::Unavailable => CoreBackendHealth::Unavailable,
+                    _ => CoreBackendHealth::Healthy,
+                };
+                let _ = emitter.try_emit(Event::BackendHealthChanged {
+                    tier,
+                    old: old_core.unwrap_or(CoreBackendHealth::Healthy),
+                    new: new_core,
+                });
+            }
         }
     }
 
@@ -190,9 +224,17 @@ impl HealthTracker {
     pub fn begin_recovery(&mut self, tier: TierId) {
         if let Some(state) = self.states.get_mut(&tier) {
             if matches!(state, BackendHealth::Unavailable) {
+                let old = CoreBackendHealth::Unavailable;
                 *state = BackendHealth::Recovering;
                 if let Some(s) = self.recovery_successes.get(&tier) {
                     s.store(0, Ordering::Relaxed);
+                }
+                if let Some(ref emitter) = self.event_emitter {
+                    let _ = emitter.try_emit(Event::BackendHealthChanged {
+                        tier,
+                        old,
+                        new: CoreBackendHealth::Recovering,
+                    });
                 }
             }
         }

@@ -6,6 +6,7 @@
 
 pub mod allocator;
 pub mod collector;
+pub mod event_bridge;
 pub mod health;
 pub mod migration;
 pub mod prometheus;
@@ -16,6 +17,7 @@ pub mod tracing;
 
 pub use allocator::AllocatorMetrics;
 pub use collector::MetricsCollector;
+pub use event_bridge::{EventBridgeMetrics, MetricsBridge};
 pub use health::BackendHealthMetrics;
 pub use migration::MigrationMetrics;
 pub use prometheus::PrometheusExporter;

@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use ghost_core::emitter::EventEmitter;
 use ghost_core::error::GhostResult;
 use ghost_core::state::{ChunkState, StateMachine};
 use ghost_core::trace::TraceEvent;
@@ -101,6 +102,8 @@ pub struct ReplayEngine {
     chunk_states: BTreeMap<ChunkId, ChunkReplayState>,
     summary: ReplaySummary,
     event_count: u64,
+    /// Optional event emitter for unified event taxonomy.
+    event_emitter: Option<EventEmitter>,
 }
 
 impl ReplayEngine {
@@ -112,7 +115,13 @@ impl ReplayEngine {
             chunk_states: BTreeMap::new(),
             summary: ReplaySummary::default(),
             event_count: 0,
+            event_emitter: None,
         }
+    }
+
+    /// Set the event emitter for unified event taxonomy.
+    pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
+        self.event_emitter = Some(emitter);
     }
 
     /// Load a trace file and replay all events.

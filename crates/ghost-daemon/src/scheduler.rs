@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use ghost_core::emitter::EventEmitter;
 use ghost_core::error::{GhostError, GhostResult};
 use ghost_core::state::{PressureState, StateMachine};
 use ghost_core::trace::{current_timestamp, TraceEvent};
@@ -32,6 +33,8 @@ pub struct TransferScheduler {
     config: SchedulerConfig,
     metrics: Arc<TransferMetrics>,
     pressure_rx: watch::Receiver<PressureState>,
+    /// Optional event emitter for unified event taxonomy.
+    event_emitter: Option<EventEmitter>,
 }
 
 impl TransferScheduler {
@@ -54,7 +57,13 @@ impl TransferScheduler {
             config,
             metrics,
             pressure_rx,
+            event_emitter: None,
         }
+    }
+
+    /// Set the event emitter for unified event taxonomy.
+    pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
+        self.event_emitter = Some(emitter);
     }
 
     /// Run the scheduler loop, dispatching jobs to the worker channel.

@@ -12,17 +12,28 @@
 //! - [`PressureState`]: System pressure model
 //! - [`TransferJob`]: Transfer job tracking
 //! - [`TraceEvent`]: Trace log events
+//! - [`Event`]: Unified event taxonomy for observability
+//! - [`EventEmitter`]: Typed event emission
+//! - [`EventMultiplexer`]: Fan-out event distribution
+//! - [`TracingHandler`]: Event → structured tracing spans
 
+pub mod emitter;
 pub mod error;
+pub mod event_multiplexer;
+pub mod events;
 pub mod hotness;
 pub mod state;
 pub mod time;
 pub mod trace;
 pub mod transfer;
+pub mod tracing_bridge;
 pub mod types;
 
 // Re-export commonly used types
+pub use emitter::EventEmitter;
 pub use error::{GhostError, GhostResult};
+pub use event_multiplexer::{EventHandler, EventMultiplexer};
+pub use events::{BackendHealth, Event, InvariantSeverity};
 pub use state::{ChunkState, PressureState, StateMachine};
 pub use time::{DeterministicClock, RealTimeProvider, TimeProvider};
 pub use trace::{EvictionReason, TraceEvent};

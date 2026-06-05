@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use ghost_core::emitter::EventEmitter;
 use ghost_core::error::{GhostError, GhostResult};
 use ghost_core::state::ChunkState;
 use ghost_core::trace::{current_timestamp, TraceEvent};
@@ -31,6 +32,8 @@ pub struct WorkerPool {
     metrics: Arc<TransferMetrics>,
     active_workers: Arc<AtomicU64>,
     state_machine: Arc<std::sync::Mutex<ghost_core::state::StateMachine>>,
+    /// Optional event emitter for unified event taxonomy.
+    event_emitter: Option<EventEmitter>,
 }
 
 impl WorkerPool {
@@ -49,7 +52,13 @@ impl WorkerPool {
             metrics,
             active_workers: Arc::new(AtomicU64::new(0)),
             state_machine,
+            event_emitter: None,
         }
+    }
+
+    /// Set the event emitter for unified event taxonomy.
+    pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
+        self.event_emitter = Some(emitter);
     }
 
     /// Start the worker pool, spawning worker tasks.

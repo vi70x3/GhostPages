@@ -242,6 +242,7 @@ fn test_invariant_events_emitted_for_io_lifecycle() {
             operation,
             chunk_id,
             tier: event_tier,
+            ..
         } => {
             assert_eq!(operation, IoOperation::Read);
             assert_eq!(chunk_id, chunk);
@@ -263,6 +264,7 @@ fn test_invariant_events_emitted_for_io_lifecycle() {
             chunk_id,
             tier: event_tier,
             duration_ticks,
+            ..
         } => {
             assert_eq!(operation, IoOperation::Read);
             assert_eq!(chunk_id, chunk);
@@ -301,7 +303,7 @@ fn test_invariant_flush_emits_events() {
 
     let event = rx.try_recv().expect("should receive IoFlushIssued");
     match event {
-        ghost_core::events::Event::IoFlushIssued { tier: _ } => {}
+        ghost_core::events::Event::IoFlushIssued { tier: _, .. } => {}
         other => panic!("expected IoFlushIssued, got {:?}", other),
     }
 

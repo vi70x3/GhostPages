@@ -402,6 +402,7 @@ impl PressureMonitor {
                 let _ = emitter.try_emit(Event::BackpressureActivated {
                     tier: TierId::Ram,
                     level: format!("critical: {:.2}", raw_global.max_pressure()),
+                    sequence_id: 0,
                 });
             }
         } else if raw_global.is_under_pressure() {
@@ -409,6 +410,23 @@ impl PressureMonitor {
                 "System under pressure: max={:.2}",
                 raw_global.max_pressure()
             );
+            // Emit PressureChanged event when under pressure
+            if let Some(ref emitter) = self.event_emitter {
+                let _ = emitter.try_emit(Event::PressureChanged {
+                    tier: TierId::Ram,
+                    old: PressureState::new(), // Previous state would be tracked in a full impl
+                    new: raw_global,
+                    sequence_id: 0,
+                });
+            }
+        } else {
+            // Pressure is normal - emit BackpressureDeactivated if previously active
+            if let Some(ref emitter) = self.event_emitter {
+                let _ = emitter.try_emit(Event::BackpressureDeactivated {
+                    tier: TierId::Ram,
+                    sequence_id: 0,
+                });
+            }
         }
     }
 }

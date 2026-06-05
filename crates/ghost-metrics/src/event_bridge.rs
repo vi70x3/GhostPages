@@ -159,6 +159,7 @@ mod tests {
             chunk_id: ChunkId::from_data(b"test"),
             tier: TierId::Ram,
             size: 1024,
+            sequence_id: 0,
         };
 
         bridge.handle(&event).await.unwrap();
@@ -175,6 +176,7 @@ mod tests {
             rule: "no_orphans".to_string(),
             details: "orphan detected".to_string(),
             severity: InvariantSeverity::Error,
+            sequence_id: 0,
         };
 
         bridge.handle(&event).await.unwrap();
@@ -191,28 +193,34 @@ mod tests {
                 chunk_id: id,
                 tier: TierId::Ram,
                 size: 100,
+                sequence_id: 0,
             },
             Event::MigrationStarted {
                 chunk_id: id,
                 from: TierId::Ram,
                 to: TierId::Disk,
+                sequence_id: 0,
             },
             Event::ReplayStarted {
                 trace_path: "trace.bin".to_string(),
+                sequence_id: 0,
             },
             Event::PressureChanged {
                 tier: TierId::Ram,
                 old: ghost_core::state::PressureState::new(),
                 new: ghost_core::state::PressureState::new(),
+                sequence_id: 0,
             },
             Event::OperationFailed {
                 operation: "store".to_string(),
                 reason: "err".to_string(),
+                sequence_id: 0,
             },
             Event::InvariantViolation {
                 rule: "test".to_string(),
                 details: "bad".to_string(),
                 severity: InvariantSeverity::Warning,
+                sequence_id: 0,
             },
         ];
 

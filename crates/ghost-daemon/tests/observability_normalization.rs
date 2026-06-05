@@ -53,6 +53,7 @@ fn test_event_category_allocation() {
         chunk_id: ChunkId::from_data(b"test"),
         tier: TierId::Ram,
         size: 4096,
+        sequence_id: 0,
     };
     assert_eq!(event.category(), "allocation");
     assert_eq!(event.event_name(), "allocation_created");
@@ -66,6 +67,7 @@ fn test_event_category_migration() {
         chunk_id: ChunkId::from_data(b"mig"),
         from: TierId::Ram,
         to: TierId::Disk,
+        sequence_id: 0,
     };
     assert_eq!(event.category(), "migration");
     assert_eq!(event.event_name(), "migration_started");
@@ -77,6 +79,7 @@ fn test_event_category_pressure() {
         tier: TierId::Ram,
         old: PressureState::new(),
         new: PressureState::new(),
+        sequence_id: 0,
     };
     assert_eq!(event.category(), "pressure");
     assert_eq!(event.event_name(), "pressure_changed");
@@ -88,6 +91,7 @@ fn test_event_category_failure() {
         tier: TierId::Ram,
         old: BackendHealth::Healthy,
         new: BackendHealth::Degraded,
+        sequence_id: 0,
     };
     assert_eq!(event.category(), "failure");
     assert_eq!(event.event_name(), "backend_health_changed");
@@ -99,6 +103,7 @@ fn test_event_category_invariant() {
         rule: "no_orphaned_transfers".to_string(),
         details: "orphan detected".to_string(),
         severity: InvariantSeverity::Critical,
+        sequence_id: 0,
     };
     assert_eq!(event.category(), "invariant_violation");
     assert_eq!(event.event_name(), "invariant_violation");
@@ -110,6 +115,7 @@ fn test_event_serialization_roundtrip() {
         chunk_id: ChunkId::from_data(b"roundtrip"),
         tier: TierId::Ram,
         size: 8192,
+        sequence_id: 0,
     };
     let json = serde_json::to_string(&original).expect("serialize");
     let deserialized: Event = serde_json::from_str(&json).expect("deserialize");
@@ -127,65 +133,78 @@ fn test_all_event_variants_serializable() {
             chunk_id,
             tier: TierId::Ram,
             size: 1024,
+            sequence_id: 0,
         },
         Event::AllocationFreed {
             chunk_id,
             tier: TierId::Ram,
+            sequence_id: 0,
         },
         Event::AllocationFailed {
             chunk_id,
             reason: "out of memory".to_string(),
+            sequence_id: 0,
         },
         Event::MigrationStarted {
             chunk_id,
             from: TierId::Ram,
             to: TierId::Disk,
+            sequence_id: 0,
         },
         Event::MigrationCompleted {
             chunk_id,
             from: TierId::Ram,
             to: TierId::Disk,
             duration_ms: 100,
+            sequence_id: 0,
         },
         Event::MigrationFailed {
             chunk_id,
             from: TierId::Ram,
             to: TierId::Disk,
             reason: "io error".to_string(),
+            sequence_id: 0,
         },
         Event::MigrationRolledBack {
             chunk_id,
             from: TierId::Disk,
             to: TierId::Ram,
+            sequence_id: 0,
         },
         Event::PressureChanged {
             tier: TierId::Ram,
             old: PressureState::new(),
             new: PressureState::new(),
+            sequence_id: 0,
         },
         Event::BackpressureActivated {
             tier: TierId::Ram,
             level: "critical".to_string(),
+            sequence_id: 0,
         },
-        Event::BackpressureDeactivated { tier: TierId::Ram },
+        Event::BackpressureDeactivated { tier: TierId::Ram, sequence_id: 0 },
         Event::BackendHealthChanged {
             tier: TierId::Ram,
             old: BackendHealth::Healthy,
             new: BackendHealth::Degraded,
+            sequence_id: 0,
         },
         Event::RetryAttempted {
             chunk_id,
             attempt: 1,
             max_attempts: 3,
+            sequence_id: 0,
         },
         Event::OperationFailed {
             operation: "store".to_string(),
             reason: "backend unavailable".to_string(),
+            sequence_id: 0,
         },
         Event::InvariantViolation {
             rule: "test_rule".to_string(),
             details: "violation details".to_string(),
             severity: InvariantSeverity::Warning,
+            sequence_id: 0,
         },
     ];
 
@@ -210,7 +229,7 @@ async fn test_emitter_sends_events() {
 
     let event = rx.recv().await.expect("should receive event");
     match event {
-        Event::AllocationCreated { chunk_id, tier, size } => {
+        Event::AllocationCreated { chunk_id, tier, size, .. } => {
             assert_eq!(chunk_id, ChunkId::from_data(b"emit"));
             assert_eq!(tier, TierId::Ram);
             assert_eq!(size, 2048);
@@ -425,7 +444,7 @@ fn test_health_tracker_emits_backend_health_changed() {
     // The event should be sent
     let event = rx.try_recv().expect("should receive health event");
     match event {
-        Event::BackendHealthChanged { tier, old, new } => {
+        Event::BackendHealthChanged { tier, old, new, .. } => {
             assert_eq!(tier, TierId::Ram);
             assert_eq!(old, BackendHealth::Healthy);
             assert_eq!(new, BackendHealth::Degraded);
@@ -455,7 +474,7 @@ fn test_health_tracker_emits_recovery_event() {
 
     let event = rx.try_recv().expect("should receive recovery event");
     match event {
-        Event::BackendHealthChanged { tier, old, new } => {
+        Event::BackendHealthChanged { tier, old, new, .. } => {
             assert_eq!(tier, TierId::Disk);
             assert_eq!(old, BackendHealth::Unavailable);
             assert_eq!(new, BackendHealth::Recovering);
@@ -516,6 +535,7 @@ fn test_event_chunk_id_extraction() {
         chunk_id: ChunkId::from_data(b"extract"),
         tier: TierId::Ram,
         size: 1024,
+        sequence_id: 0,
     };
     assert_eq!(event.chunk_id(), Some(ChunkId::from_data(b"extract")));
 
@@ -523,6 +543,7 @@ fn test_event_chunk_id_extraction() {
         tier: TierId::Ram,
         old: PressureState::new(),
         new: PressureState::new(),
+        sequence_id: 0,
     };
     assert!(event.chunk_id().is_none());
 }
@@ -532,6 +553,7 @@ fn test_event_tier_extraction() {
     let event = Event::AllocationFreed {
         chunk_id: ChunkId::from_data(b"tier"),
         tier: TierId::Disk,
+        sequence_id: 0,
     };
     assert_eq!(event.tier(), Some(TierId::Disk));
 
@@ -539,6 +561,7 @@ fn test_event_tier_extraction() {
         rule: "r".to_string(),
         details: "d".to_string(),
         severity: InvariantSeverity::Info,
+        sequence_id: 0,
     };
     assert!(event.tier().is_none());
 }
@@ -559,14 +582,13 @@ fn test_orchestrator_emits_allocation_event() {
         .store(chunk_id, TierId::Ram, b"hello")
         .expect("store should succeed");
 
-    let event = rx.try_recv().expect("should receive allocation event");
+    let event = rx.try_recv().expect("should receive store event");
     match event {
-        Event::AllocationCreated { chunk_id: cid, tier, size } => {
-            assert_eq!(cid, chunk_id);
-            assert_eq!(tier, TierId::Ram);
-            assert_eq!(size, 5); // "hello".len()
+        Event::Store { key, value_size, .. } => {
+            assert_eq!(key, format!("{:?}", chunk_id));
+            assert_eq!(value_size, 5); // "hello".len()
         }
-        _ => panic!("expected AllocationCreated, got {:?}", event.event_name()),
+        _ => panic!("expected Store, got {:?}", event.event_name()),
     }
 }
 
@@ -584,21 +606,21 @@ fn test_orchestrator_emits_migration_event() {
     orchestrator
         .store(chunk_id, TierId::Ram, b"data")
         .expect("store should succeed");
-    let _ = rx.try_recv(); // consume allocation event
+    let _ = rx.try_recv(); // consume store event
 
     // Migrate (size = 4 bytes for "data")
     orchestrator
         .migrate(chunk_id, TierId::Ram, TierId::Simulation, 4)
         .expect("migrate should succeed");
 
-    let event = rx.try_recv().expect("should receive migration event");
+    let event = rx.try_recv().expect("should receive migration decision event");
     match event {
-        Event::MigrationStarted { chunk_id: cid, from, to } => {
+        Event::MigrationDecision { chunk_id: cid, from, to, .. } => {
             assert_eq!(cid, chunk_id);
             assert_eq!(from, TierId::Ram);
             assert_eq!(to, TierId::Simulation);
         }
-        _ => panic!("expected MigrationStarted, got {:?}", event.event_name()),
+        _ => panic!("expected MigrationDecision, got {:?}", event.event_name()),
     }
 }
 
@@ -615,7 +637,7 @@ fn test_orchestrator_emits_eviction_event() {
     orchestrator
         .store(chunk_id, TierId::Ram, b"data")
         .expect("store should succeed");
-    let _ = rx.try_recv(); // consume allocation event
+    let _ = rx.try_recv(); // consume store event
 
     orchestrator
         .evict(chunk_id, TierId::Ram)
@@ -623,10 +645,10 @@ fn test_orchestrator_emits_eviction_event() {
 
     let event = rx.try_recv().expect("should receive eviction event");
     match event {
-        Event::AllocationFreed { chunk_id: cid, tier } => {
+        Event::Eviction { chunk_id: cid, tier, .. } => {
             assert_eq!(cid, chunk_id);
             assert_eq!(tier, TierId::Ram);
         }
-        _ => panic!("expected AllocationFreed, got {:?}", event.event_name()),
+        _ => panic!("expected Eviction, got {:?}", event.event_name()),
     }
 }

@@ -10,9 +10,12 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use ghost_core::emitter::EventEmitter;
+use ghost_core::events::Event;
 use ghost_core::state::PressureState;
 use ghost_core::trace::{current_timestamp, TraceEvent};
 use ghost_core::transfer::TransferPriority;
+use ghost_core::types::TierId;
 
 use crate::config::BackpressureConfig;
 use crate::trace_log::TraceLog;
@@ -87,6 +90,8 @@ pub struct BackpressureStats {
 pub struct BackpressureController {
     config: BackpressureConfig,
     trace_log: Arc<TraceLog>,
+    /// Optional event emitter for unified event taxonomy.
+    event_emitter: Option<EventEmitter>,
     /// Current backpressure action.
     current_action: Arc<AtomicU8>,
     /// Statistics.
@@ -103,11 +108,17 @@ impl BackpressureController {
         Self {
             config,
             trace_log,
+            event_emitter: None,
             current_action: Arc::new(AtomicU8::new(0)), // Allow = 0
             stats: Arc::new(std::sync::Mutex::new(BackpressureStats::default())),
             last_evaluation: Arc::new(std::sync::Mutex::new(Instant::now())),
             pressure_since: Arc::new(std::sync::Mutex::new(None)),
         }
+    }
+
+    /// Set the event emitter for unified event taxonomy.
+    pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
+        self.event_emitter = Some(emitter);
     }
 
     /// Evaluate the current pressure and determine the appropriate action.
@@ -180,6 +191,29 @@ impl BackpressureController {
                 io_pressure: pressure.io_pressure,
                 timestamp: current_timestamp(),
             });
+
+            // Emit unified event for backpressure activation
+            if let Some(ref emitter) = self.event_emitter {
+                let level = match action {
+                    BackpressureAction::Throttle => "throttle",
+                    BackpressureAction::Reject => "reject",
+                    BackpressureAction::CriticalOnly => "critical-only",
+                    _ => "allow",
+                };
+                let _ = emitter.try_emit(Event::BackpressureActivated {
+                    tier: TierId::Ram,
+                    level: level.to_string(),
+                    sequence_id: 0,
+                });
+            }
+        } else if action == BackpressureAction::Allow && prev_action != 0 {
+            // Emit unified event for backpressure deactivation
+            if let Some(ref emitter) = self.event_emitter {
+                let _ = emitter.try_emit(Event::BackpressureDeactivated {
+                    tier: TierId::Ram,
+                    sequence_id: 0,
+                });
+            }
         }
 
         *self.last_evaluation.lock().unwrap() = now;

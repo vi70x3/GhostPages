@@ -85,6 +85,13 @@ impl TransferScheduler {
                     // Update queue depth metric
                     self.metrics.set_queue_depth(self.queue.depth() as u64);
 
+                    // Emit QueueDequeue event
+                    if let Some(ref emitter) = self.event_emitter {
+                        let _ = emitter.try_emit(ghost_core::events::Event::QueueDequeue {
+                            task_id: job.attempts as u64,
+                            sequence_id: 0,
+                        });
+                    }
 
                     // Check pressure before dispatching
                     let pressure = *self.pressure_rx.borrow();
@@ -94,14 +101,14 @@ impl TransferScheduler {
                             job.chunk_id,
                             pressure.max_pressure()
                         );
-                        self.trace_log.record(TraceEvent::PolicyDecision {
+                                                self.trace_log.record(TraceEvent::PolicyDecision {
                             chunk_id: job.chunk_id,
                             from: job.from_tier,
                             to: job.to_tier,
                             reason: format!("pressure {:.2}", pressure.max_pressure()),
                             timestamp: current_timestamp(),
-                        });
-                        continue;
+                                                });
+                                                continue;
                     }
 
                     // Validate and dispatch

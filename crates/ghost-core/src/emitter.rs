@@ -5,6 +5,10 @@
 //! hold an `EventEmitter` and call the appropriate method instead of
 //! constructing raw `Event` values manually.
 //!
+//! Events are automatically stamped with a monotonically increasing
+//! [`sequence_id`](Event::sequence_id) at emission time, providing total
+//! ordering across all events emitted through this emitter.
+//!
 //! # Example
 //!
 //! ```
@@ -18,6 +22,8 @@
 //! // rx.recv() would now return Event::AllocationCreated { ... }
 //! ```
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use tokio::sync::mpsc;
 
 use crate::events::{BackendHealth, Event, InvariantSeverity};
@@ -29,28 +35,61 @@ use crate::types::{ChunkId, TierId};
 /// Use [`EventEmitter::new`] to create an emitter, then call the typed
 /// methods to emit events. The emitter is `Clone` so it can be shared
 /// across tasks and subsystems.
-#[derive(Debug, Clone)]
+///
+/// Each emitter owns an internal monotonic counter. Every event is stamped
+/// with the next sequence id at emission time, so events from a single
+/// emitter are totally ordered.
+#[derive(Clone)]
 pub struct EventEmitter {
     tx: mpsc::Sender<Event>,
+    sequence_counter: std::sync::Arc<AtomicU64>,
+}
+
+impl std::fmt::Debug for EventEmitter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventEmitter")
+            .field("sequence_counter", &self.sequence_counter.load(Ordering::SeqCst))
+            .finish()
+    }
 }
 
 impl EventEmitter {
     /// Create a new emitter that sends events to the given channel.
+    ///
+    /// Sequence ids start at 1 and increase monotonically with each
+    /// emission.
     pub fn new(tx: mpsc::Sender<Event>) -> Self {
-        Self { tx }
+        Self {
+            tx,
+            sequence_counter: std::sync::Arc::new(AtomicU64::new(1)),
+        }
+    }
+
+    /// Return the next sequence id (for testing / diagnostics).
+    pub fn next_sequence_id(&self) -> u64 {
+        self.sequence_counter.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Stamp an event with the next sequence id and return it.
+    fn stamp(&self, event: Event) -> Event {
+        event.with_sequence_id(self.next_sequence_id())
     }
 
     /// Emit an event synchronously using `try_send`.
     ///
     /// Returns `Err` if the channel is full or closed. This is intended for
     /// use from non-async contexts (e.g. synchronous subsystem methods).
+    ///
+    /// The event is automatically stamped with a monotonic sequence id.
     pub fn try_emit(&self, event: Event) -> Result<(), mpsc::error::TrySendError<Event>> {
-        self.tx.try_send(event)
+        self.tx.try_send(self.stamp(event))
     }
 
     /// Emit an event, returning `Err` if the channel is closed.
+    ///
+    /// The event is automatically stamped with a monotonic sequence id.
     pub async fn emit(&self, event: Event) -> Result<(), mpsc::error::SendError<Event>> {
-        self.tx.send(event).await
+        self.tx.send(self.stamp(event)).await
     }
 
     // ── Allocation events ────────────────────────────────────────────────────
@@ -66,6 +105,7 @@ impl EventEmitter {
             chunk_id,
             tier,
             size,
+            sequence_id: 0,
         })
         .await
     }
@@ -76,7 +116,7 @@ impl EventEmitter {
         chunk_id: ChunkId,
         tier: TierId,
     ) -> Result<(), mpsc::error::SendError<Event>> {
-        self.emit(Event::AllocationFreed { chunk_id, tier }).await
+        self.emit(Event::AllocationFreed { chunk_id, tier, sequence_id: 0 }).await
     }
 
     /// Emit [`Event::AllocationFailed`].
@@ -88,6 +128,7 @@ impl EventEmitter {
         self.emit(Event::AllocationFailed {
             chunk_id,
             reason: reason.into(),
+            sequence_id: 0,
         })
         .await
     }
@@ -101,7 +142,7 @@ impl EventEmitter {
         from: TierId,
         to: TierId,
     ) -> Result<(), mpsc::error::SendError<Event>> {
-        self.emit(Event::MigrationStarted { chunk_id, from, to })
+        self.emit(Event::MigrationStarted { chunk_id, from, to, sequence_id: 0 })
             .await
     }
 
@@ -118,6 +159,7 @@ impl EventEmitter {
             from,
             to,
             duration_ms,
+            sequence_id: 0,
         })
         .await
     }
@@ -135,6 +177,7 @@ impl EventEmitter {
             from,
             to,
             reason: reason.into(),
+            sequence_id: 0,
         })
         .await
     }
@@ -146,7 +189,7 @@ impl EventEmitter {
         from: TierId,
         to: TierId,
     ) -> Result<(), mpsc::error::SendError<Event>> {
-        self.emit(Event::MigrationRolledBack { chunk_id, from, to })
+        self.emit(Event::MigrationRolledBack { chunk_id, from, to, sequence_id: 0 })
             .await
     }
 
@@ -159,6 +202,7 @@ impl EventEmitter {
     ) -> Result<(), mpsc::error::SendError<Event>> {
         self.emit(Event::ReplayStarted {
             trace_path: trace_path.into(),
+            sequence_id: 0,
         })
         .await
     }
@@ -174,6 +218,7 @@ impl EventEmitter {
             trace_path: trace_path.into(),
             events,
             duration_ms,
+            sequence_id: 0,
         })
         .await
     }
@@ -189,6 +234,7 @@ impl EventEmitter {
             trace_path: trace_path.into(),
             expected: expected.into(),
             actual: actual.into(),
+            sequence_id: 0,
         })
         .await
     }
@@ -202,6 +248,7 @@ impl EventEmitter {
         self.emit(Event::ReplayInvariantViolation {
             rule: rule.into(),
             details: details.into(),
+            sequence_id: 0,
         })
         .await
     }
@@ -215,7 +262,7 @@ impl EventEmitter {
         old: PressureState,
         new: PressureState,
     ) -> Result<(), mpsc::error::SendError<Event>> {
-        self.emit(Event::PressureChanged { tier, old, new }).await
+        self.emit(Event::PressureChanged { tier, old, new, sequence_id: 0 }).await
     }
 
     /// Emit [`Event::BackpressureActivated`].
@@ -227,6 +274,7 @@ impl EventEmitter {
         self.emit(Event::BackpressureActivated {
             tier,
             level: level.into(),
+            sequence_id: 0,
         })
         .await
     }
@@ -236,7 +284,7 @@ impl EventEmitter {
         &self,
         tier: TierId,
     ) -> Result<(), mpsc::error::SendError<Event>> {
-        self.emit(Event::BackpressureDeactivated { tier }).await
+        self.emit(Event::BackpressureDeactivated { tier, sequence_id: 0 }).await
     }
 
     // ── Failure events ───────────────────────────────────────────────────────
@@ -248,7 +296,7 @@ impl EventEmitter {
         old: BackendHealth,
         new: BackendHealth,
     ) -> Result<(), mpsc::error::SendError<Event>> {
-        self.emit(Event::BackendHealthChanged { tier, old, new })
+        self.emit(Event::BackendHealthChanged { tier, old, new, sequence_id: 0 })
             .await
     }
 
@@ -263,6 +311,7 @@ impl EventEmitter {
             chunk_id,
             attempt,
             max_attempts,
+            sequence_id: 0,
         })
         .await
     }
@@ -276,6 +325,7 @@ impl EventEmitter {
         self.emit(Event::OperationFailed {
             operation: operation.into(),
             reason: reason.into(),
+            sequence_id: 0,
         })
         .await
     }
@@ -293,6 +343,7 @@ impl EventEmitter {
             rule: rule.into(),
             details: details.into(),
             severity,
+            sequence_id: 0,
         })
         .await
     }
@@ -322,10 +373,12 @@ mod tests {
                 chunk_id,
                 tier,
                 size,
+                sequence_id,
             } => {
                 assert_eq!(chunk_id, id);
                 assert_eq!(tier, TierId::Ram);
                 assert_eq!(size, 4096);
+                assert!(sequence_id > 0, "sequence_id should be auto-stamped");
             }
             other => panic!("unexpected event: {:?}", other),
         }
@@ -345,11 +398,13 @@ mod tests {
                 from,
                 to,
                 duration_ms,
+                sequence_id,
             } => {
                 assert_eq!(chunk_id, id);
                 assert_eq!(from, TierId::Ram);
                 assert_eq!(to, TierId::Disk);
                 assert_eq!(duration_ms, 150);
+                assert!(sequence_id > 0, "sequence_id should be auto-stamped");
             }
             other => panic!("unexpected event: {:?}", other),
         }
@@ -363,10 +418,11 @@ mod tests {
             .await
             .unwrap();
         match rx.recv().await.unwrap() {
-            Event::BackendHealthChanged { tier, old, new } => {
+            Event::BackendHealthChanged { tier, old, new, sequence_id } => {
                 assert_eq!(tier, TierId::Disk);
                 assert_eq!(old, BackendHealth::Healthy);
                 assert_eq!(new, BackendHealth::Degraded);
+                assert!(sequence_id > 0, "sequence_id should be auto-stamped");
             }
             other => panic!("unexpected event: {:?}", other),
         }
@@ -384,10 +440,12 @@ mod tests {
                 rule,
                 details,
                 severity,
+                sequence_id,
             } => {
                 assert_eq!(rule, "no_orphans");
                 assert_eq!(details, "orphaned transfer detected");
                 assert_eq!(severity, InvariantSeverity::Error);
+                assert!(sequence_id > 0, "sequence_id should be auto-stamped");
             }
             other => panic!("unexpected event: {:?}", other),
         }

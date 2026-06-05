@@ -162,6 +162,7 @@ impl IoScheduler {
                 operation,
                 chunk_id,
                 tier,
+                sequence_id: 0,
             },
         );
 
@@ -216,6 +217,7 @@ impl IoScheduler {
                         chunk_id: request.chunk_id,
                         tier: request.tier,
                         duration_ticks,
+                        sequence_id: 0,
                     },
                 );
                 IoCompletion::Completed { duration_ticks }
@@ -227,6 +229,7 @@ impl IoScheduler {
                         chunk_id: request.chunk_id,
                         tier: request.tier,
                         error: error.clone(),
+                        sequence_id: 0,
                     },
                 );
                 IoCompletion::Failed { error }
@@ -273,6 +276,7 @@ impl IoScheduler {
         let _ = self.event_emitter.try_emit(
             crate::events::Event::IoFlushIssued {
                 tier: TierId::Simulation, // Will be overridden by per-request tier
+                sequence_id: 0,
             },
         );
 
@@ -292,6 +296,7 @@ impl IoScheduler {
                         chunk_id: request.chunk_id,
                         tier: request.tier,
                         duration_ticks,
+                        sequence_id: 0,
                     },
                 );
 
@@ -306,6 +311,7 @@ impl IoScheduler {
             crate::events::Event::IoFlushCompleted {
                 tier: TierId::Simulation,
                 duration_ticks: flush_duration_ticks,
+                sequence_id: 0,
             },
         );
     }

@@ -84,6 +84,7 @@ impl WorkerPool {
             let retry_base_delay_ms = self.config.retry_base_delay_ms;
             let max_retry_delay_ms = self.config.max_retry_delay_ms;
             let enable_compression = self.config.enable_compression;
+            let event_emitter = self.event_emitter.clone();
             let mut shutdown_rx = shutdown_rx.clone();
             let rx = rx.clone();
 
@@ -117,12 +118,35 @@ impl WorkerPool {
                                 max_retry_delay_ms,
                                 enable_compression,
                                 worker_id,
+                                event_emitter.clone(),
                             )
                             .await;
 
                             match result {
                                 Ok(()) => {
                                     metrics.record_completion();
+                                    // Emit TransferCompleted event
+                                    if let Some(ref emitter) = event_emitter {
+                                        let _ = emitter.try_emit(ghost_core::events::Event::TransferCompleted {
+                                            chunk_id: job.chunk_id,
+                                            from: job.from_tier,
+                                            to: job.to_tier,
+                                            duration_ms: 0, // TODO: track actual duration
+                                            sequence_id: 0,
+                                        });
+                                    }
+                                    // Emit MigrationCompleted event for cross-tier migrations
+                                    if job.from_tier != job.to_tier {
+                                        if let Some(ref emitter) = event_emitter {
+                                            let _ = emitter.try_emit(ghost_core::events::Event::MigrationCompleted {
+                                                chunk_id: job.chunk_id,
+                                                from: job.from_tier,
+                                                to: job.to_tier,
+                                                duration_ms: 0, // TODO: track actual duration
+                                                sequence_id: 0,
+                                            });
+                                        }
+                                    }
                                     // After successful cross-tier migration,
                                     // transition chunk from Migrating to Stored
                                     if job.from_tier != job.to_tier {
@@ -147,6 +171,16 @@ impl WorkerPool {
                                 }
                                 Err(e) => {
                                     metrics.record_failure();
+                                    // Emit TransferFailed event
+                                    if let Some(ref emitter) = event_emitter {
+                                        let _ = emitter.try_emit(ghost_core::events::Event::TransferFailed {
+                                            chunk_id: job.chunk_id,
+                                            from: job.from_tier,
+                                            to: job.to_tier,
+                                            reason: e.to_string(),
+                                            sequence_id: 0,
+                                        });
+                                    }
                                     trace_log.record(TraceEvent::TransferFailed {
                                         chunk_id: job.chunk_id,
                                         from: job.from_tier,
@@ -203,6 +237,7 @@ impl WorkerPool {
         max_retry_delay_ms: u64,
         enable_compression: bool,
         _worker_id: usize,
+        event_emitter: Option<EventEmitter>,
     ) -> GhostResult<()> {
         let start_time = std::time::Instant::now();
 
@@ -217,6 +252,15 @@ impl WorkerPool {
         for attempt in 0..=max_retries {
             if attempt > 0 {
                 job.record_attempt();
+                // Emit RetryAttempted event
+                if let Some(ref emitter) = event_emitter {
+                    let _ = emitter.try_emit(ghost_core::events::Event::RetryAttempted {
+                        chunk_id: job.chunk_id,
+                        attempt,
+                        max_attempts: max_retries,
+                        sequence_id: 0,
+                    });
+                }
                 // Emit transfer retry event
                 trace_log.record(TraceEvent::TransferRetry {
                     chunk_id: job.chunk_id,

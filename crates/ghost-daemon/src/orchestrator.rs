@@ -176,13 +176,18 @@ impl TransferOrchestrator {
         });
 
         // Create and start the worker pool
-        let worker_pool = WorkerPool::new(
+        let mut worker_pool = WorkerPool::new(
             self.worker_config.clone(),
             self.backends.clone(),
             self.trace_log.clone(),
             self.metrics.clone(),
             self.state_machine.clone(),
         );
+
+        // Pass event emitter to worker pool if configured
+        if let Some(ref emitter) = self.event_emitter {
+            worker_pool.set_event_emitter(emitter.clone());
+        }
 
         let (job_tx, worker_handles) = worker_pool.start(shutdown_rx.clone());
 
@@ -390,10 +395,10 @@ impl TransferOrchestrator {
 
         // Emit unified event
         if let Some(ref emitter) = self.event_emitter {
-            let _ = emitter.try_emit(Event::AllocationCreated {
-                chunk_id,
-                tier,
-                size: data.len(),
+            let _ = emitter.try_emit(Event::Store {
+                key: format!("{:?}", chunk_id),
+                value_size: data.len(),
+                sequence_id: 0,
             });
         }
 
@@ -432,6 +437,14 @@ impl TransferOrchestrator {
         }
 
         // For retrieve, we use a same-tier transfer
+        // Emit Retrieve event
+        if let Some(ref emitter) = self.event_emitter {
+            let _ = emitter.try_emit(Event::Retrieve {
+                key: format!("{:?}", chunk_id),
+                hit: true,
+                sequence_id: 0,
+            });
+        }
         let job = TransferJob::new(chunk_id, tier, tier, 0, TransferPriority::High);
         self.submit_job(job)
     }
@@ -484,12 +497,23 @@ impl TransferOrchestrator {
 
         let job = TransferJob::new(chunk_id, from_tier, to_tier, size, priority);
 
-        // Emit unified event
+        // Emit MigrationDecision event
+        if let Some(ref emitter) = self.event_emitter {
+            let _ = emitter.try_emit(Event::MigrationDecision {
+                chunk_id,
+                from: from_tier,
+                to: to_tier,
+                decision: "started".to_string(),
+                sequence_id: 0,
+            });
+        }
+        // Emit MigrationStarted event
         if let Some(ref emitter) = self.event_emitter {
             let _ = emitter.try_emit(Event::MigrationStarted {
                 chunk_id,
                 from: from_tier,
                 to: to_tier,
+                sequence_id: 0,
             });
         }
 
@@ -536,7 +560,12 @@ impl TransferOrchestrator {
 
         // Emit unified event
         if let Some(ref emitter) = self.event_emitter {
-            let _ = emitter.try_emit(Event::AllocationFreed { chunk_id, tier });
+            let _ = emitter.try_emit(Event::Eviction {
+                chunk_id,
+                tier,
+                reason: "manual".to_string(),
+                sequence_id: 0,
+            });
         }
 
         tracing::info!("Evicted chunk {:?} from tier {:?}", chunk_id, tier);

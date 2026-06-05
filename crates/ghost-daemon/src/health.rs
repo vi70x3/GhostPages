@@ -154,6 +154,7 @@ impl HealthTracker {
                     tier,
                     old: old_core.unwrap_or(CoreBackendHealth::Healthy),
                     new: new_core,
+                    sequence_id: 0,
                 });
             }
         }
@@ -165,6 +166,7 @@ impl HealthTracker {
     /// If the backend was recovering, increments the recovery success counter.
     pub fn record_success(&mut self, tier: TierId) {
         if let Some(state) = self.states.get_mut(&tier) {
+            let prev = *state;
             match state {
                 BackendHealth::Degraded => {
                     if let Some(count) = self.failure_counts.get(&tier) {
@@ -195,6 +197,24 @@ impl HealthTracker {
                     }
                 }
                 _ => {}
+            }
+            // Emit event if state changed to Healthy
+            let new_state = *state;
+            if prev != new_state && new_state == BackendHealth::Healthy {
+                if let Some(ref emitter) = self.event_emitter {
+                    let old_core = match prev {
+                        BackendHealth::Degraded => CoreBackendHealth::Degraded,
+                        BackendHealth::Unavailable => CoreBackendHealth::Unavailable,
+                        BackendHealth::Recovering => CoreBackendHealth::Recovering,
+                        _ => CoreBackendHealth::Healthy,
+                    };
+                    let _ = emitter.try_emit(Event::BackendHealthChanged {
+                        tier,
+                        old: old_core,
+                        new: CoreBackendHealth::Healthy,
+                        sequence_id: 0,
+                    });
+                }
             }
         }
     }
@@ -234,6 +254,7 @@ impl HealthTracker {
                         tier,
                         old,
                         new: CoreBackendHealth::Recovering,
+                        sequence_id: 0,
                     });
                 }
             }

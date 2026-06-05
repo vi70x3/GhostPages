@@ -99,10 +99,11 @@ impl std::fmt::Display for BackendHealth {
 ///     chunk_id: ChunkId::from_data(b"hello"),
 ///     tier: TierId::Ram,
 ///     size: 4096,
+///     sequence_id: 0,
 /// };
 ///
 /// match event {
-///     Event::AllocationCreated { chunk_id, tier, size } => {
+///     Event::AllocationCreated { chunk_id, tier, size, .. } => {
 ///         println!("Created {} on {:?} ({} bytes)", chunk_id, tier, size);
 ///     }
 ///     _ => {}
@@ -114,6 +115,7 @@ pub enum Event {
 
     /// A new chunk was allocated in a tier.
     AllocationCreated {
+        sequence_id: u64,
         chunk_id: ChunkId,
         tier: TierId,
         size: usize,
@@ -121,20 +123,81 @@ pub enum Event {
 
     /// A chunk was freed from a tier.
     AllocationFreed {
+        sequence_id: u64,
         chunk_id: ChunkId,
         tier: TierId,
     },
 
     /// An allocation operation failed.
     AllocationFailed {
+        sequence_id: u64,
         chunk_id: ChunkId,
         reason: String,
+    },
+    /// A chunk eviction occurred.
+    Eviction {
+        sequence_id: u64,
+        chunk_id: ChunkId,
+        tier: TierId,
+        reason: String,
+    },
+    /// A retrieve operation was performed.
+    Retrieve {
+        sequence_id: u64,
+        key: String,
+        hit: bool,
+    },
+    /// A transfer completed successfully.
+    TransferCompleted {
+        sequence_id: u64,
+        chunk_id: ChunkId,
+        from: TierId,
+        to: TierId,
+        duration_ms: u64,
+    },
+    /// A transfer failed.
+    TransferFailed {
+        sequence_id: u64,
+        chunk_id: ChunkId,
+        from: TierId,
+        to: TierId,
+        reason: String,
+    },
+    /// A store operation was performed (state mutation).
+    Store {
+        sequence_id: u64,
+        key: String,
+        value_size: usize,
+    },
+    /// An evict operation was performed.
+    Evict {
+        sequence_id: u64,
+        key: String,
+    },
+    /// An item was enqueued in the scheduler queue.
+    QueueEnqueue {
+        sequence_id: u64,
+        task_id: u64,
+    },
+    /// An item was dequeued from the scheduler queue.
+    QueueDequeue {
+        sequence_id: u64,
+        task_id: u64,
+    },
+    /// A migration decision was made.
+    MigrationDecision {
+        sequence_id: u64,
+        chunk_id: ChunkId,
+        from: TierId,
+        to: TierId,
+        decision: String,
     },
 
     // ── Migration ────────────────────────────────────────────────────────────
 
     /// A chunk migration between tiers was started.
     MigrationStarted {
+        sequence_id: u64,
         chunk_id: ChunkId,
         from: TierId,
         to: TierId,
@@ -142,6 +205,7 @@ pub enum Event {
 
     /// A chunk migration completed successfully.
     MigrationCompleted {
+        sequence_id: u64,
         chunk_id: ChunkId,
         from: TierId,
         to: TierId,
@@ -150,6 +214,7 @@ pub enum Event {
 
     /// A chunk migration failed.
     MigrationFailed {
+        sequence_id: u64,
         chunk_id: ChunkId,
         from: TierId,
         to: TierId,
@@ -158,6 +223,7 @@ pub enum Event {
 
     /// A failed migration was rolled back to the source tier.
     MigrationRolledBack {
+        sequence_id: u64,
         chunk_id: ChunkId,
         from: TierId,
         to: TierId,
@@ -167,11 +233,13 @@ pub enum Event {
 
     /// A trace replay was started.
     ReplayStarted {
+        sequence_id: u64,
         trace_path: String,
     },
 
     /// A trace replay completed successfully.
     ReplayCompleted {
+        sequence_id: u64,
         trace_path: String,
         events: usize,
         duration_ms: u64,
@@ -179,6 +247,7 @@ pub enum Event {
 
     /// A replay diverged from the expected trace.
     ReplayDivergence {
+        sequence_id: u64,
         trace_path: String,
         expected: String,
         actual: String,
@@ -186,6 +255,7 @@ pub enum Event {
 
     /// An invariant violation was detected during replay.
     ReplayInvariantViolation {
+        sequence_id: u64,
         rule: String,
         details: String,
     },
@@ -194,6 +264,7 @@ pub enum Event {
 
     /// System pressure changed for a tier.
     PressureChanged {
+        sequence_id: u64,
         tier: TierId,
         old: PressureState,
         new: PressureState,
@@ -201,12 +272,14 @@ pub enum Event {
 
     /// Backpressure was activated for a tier.
     BackpressureActivated {
+        sequence_id: u64,
         tier: TierId,
         level: String,
     },
 
     /// Backpressure was deactivated for a tier.
     BackpressureDeactivated {
+        sequence_id: u64,
         tier: TierId,
     },
 
@@ -214,6 +287,7 @@ pub enum Event {
 
     /// A backend's health status changed.
     BackendHealthChanged {
+        sequence_id: u64,
         tier: TierId,
         old: BackendHealth,
         new: BackendHealth,
@@ -221,6 +295,7 @@ pub enum Event {
 
     /// A transfer is being retried.
     RetryAttempted {
+        sequence_id: u64,
         chunk_id: ChunkId,
         attempt: u32,
         max_attempts: u32,
@@ -228,6 +303,7 @@ pub enum Event {
 
     /// An operation failed irrecoverably.
     OperationFailed {
+        sequence_id: u64,
         operation: String,
         reason: String,
     },
@@ -236,6 +312,7 @@ pub enum Event {
 
     /// An invariant was violated during replay validation.
     InvariantViolation {
+        sequence_id: u64,
         rule: String,
         details: String,
         severity: InvariantSeverity,
@@ -245,6 +322,7 @@ pub enum Event {
 
     /// An I/O request was issued to a tier.
     IoRequestIssued {
+        sequence_id: u64,
         operation: IoOperation,
         chunk_id: ChunkId,
         tier: TierId,
@@ -252,6 +330,7 @@ pub enum Event {
 
     /// An I/O request completed successfully.
     IoRequestCompleted {
+        sequence_id: u64,
         operation: IoOperation,
         chunk_id: ChunkId,
         tier: TierId,
@@ -260,6 +339,7 @@ pub enum Event {
 
     /// An I/O request failed.
     IoRequestFailed {
+        sequence_id: u64,
         operation: IoOperation,
         chunk_id: ChunkId,
         tier: TierId,
@@ -268,17 +348,20 @@ pub enum Event {
 
     /// A flush (fsync) was issued for a tier.
     IoFlushIssued {
+        sequence_id: u64,
         tier: TierId,
     },
 
     /// A flush (fsync) completed for a tier.
     IoFlushCompleted {
+        sequence_id: u64,
         tier: TierId,
         duration_ticks: u64,
     },
 
     /// The buffer fill level changed for a tier.
     IoBufferStateChange {
+        sequence_id: u64,
         tier: TierId,
         buffered: usize,
         capacity: usize,
@@ -286,6 +369,91 @@ pub enum Event {
 }
 
 impl Event {
+    /// Get the sequence ID for this event.
+    ///
+    /// The sequence ID is a monotonically increasing counter assigned by the
+    /// [`EventEmitter`] at emission time. It provides a total order across all
+    /// events in a single process run, enabling replay equivalence checks.
+    pub fn sequence_id(&self) -> u64 {
+        match self {
+            Event::AllocationCreated { sequence_id, .. } => *sequence_id,
+            Event::AllocationFreed { sequence_id, .. } => *sequence_id,
+            Event::AllocationFailed { sequence_id, .. } => *sequence_id,
+            Event::Eviction { sequence_id, .. } => *sequence_id,
+            Event::Retrieve { sequence_id, .. } => *sequence_id,
+            Event::TransferCompleted { sequence_id, .. } => *sequence_id,
+            Event::TransferFailed { sequence_id, .. } => *sequence_id,
+            Event::Store { sequence_id, .. } => *sequence_id,
+            Event::Evict { sequence_id, .. } => *sequence_id,
+            Event::QueueEnqueue { sequence_id, .. } => *sequence_id,
+            Event::QueueDequeue { sequence_id, .. } => *sequence_id,
+            Event::MigrationDecision { sequence_id, .. } => *sequence_id,
+            Event::MigrationStarted { sequence_id, .. } => *sequence_id,
+            Event::MigrationCompleted { sequence_id, .. } => *sequence_id,
+            Event::MigrationFailed { sequence_id, .. } => *sequence_id,
+            Event::MigrationRolledBack { sequence_id, .. } => *sequence_id,
+            Event::ReplayStarted { sequence_id, .. } => *sequence_id,
+            Event::ReplayCompleted { sequence_id, .. } => *sequence_id,
+            Event::ReplayDivergence { sequence_id, .. } => *sequence_id,
+            Event::ReplayInvariantViolation { sequence_id, .. } => *sequence_id,
+            Event::PressureChanged { sequence_id, .. } => *sequence_id,
+            Event::BackpressureActivated { sequence_id, .. } => *sequence_id,
+            Event::BackpressureDeactivated { sequence_id, .. } => *sequence_id,
+            Event::BackendHealthChanged { sequence_id, .. } => *sequence_id,
+            Event::RetryAttempted { sequence_id, .. } => *sequence_id,
+            Event::OperationFailed { sequence_id, .. } => *sequence_id,
+            Event::InvariantViolation { sequence_id, .. } => *sequence_id,
+            Event::IoRequestIssued { sequence_id, .. } => *sequence_id,
+            Event::IoRequestCompleted { sequence_id, .. } => *sequence_id,
+            Event::IoRequestFailed { sequence_id, .. } => *sequence_id,
+            Event::IoFlushIssued { sequence_id, .. } => *sequence_id,
+            Event::IoFlushCompleted { sequence_id, .. } => *sequence_id,
+            Event::IoBufferStateChange { sequence_id, .. } => *sequence_id,
+        }
+    }
+
+    /// Set the sequence ID for this event, returning a new event with the
+    /// given sequence ID. This is used by the [`EventEmitter`] to stamp
+    /// events with a monotonically increasing counter at emission time.
+    pub fn with_sequence_id(mut self, sequence_id: u64) -> Self {
+        match &mut self {
+            Event::AllocationCreated { sequence_id: s, .. } => *s = sequence_id,
+            Event::AllocationFreed { sequence_id: s, .. } => *s = sequence_id,
+            Event::AllocationFailed { sequence_id: s, .. } => *s = sequence_id,
+            Event::Eviction { sequence_id: s, .. } => *s = sequence_id,
+            Event::Retrieve { sequence_id: s, .. } => *s = sequence_id,
+            Event::TransferCompleted { sequence_id: s, .. } => *s = sequence_id,
+            Event::TransferFailed { sequence_id: s, .. } => *s = sequence_id,
+            Event::Store { sequence_id: s, .. } => *s = sequence_id,
+            Event::Evict { sequence_id: s, .. } => *s = sequence_id,
+            Event::QueueEnqueue { sequence_id: s, .. } => *s = sequence_id,
+            Event::QueueDequeue { sequence_id: s, .. } => *s = sequence_id,
+            Event::MigrationDecision { sequence_id: s, .. } => *s = sequence_id,
+            Event::MigrationStarted { sequence_id: s, .. } => *s = sequence_id,
+            Event::MigrationCompleted { sequence_id: s, .. } => *s = sequence_id,
+            Event::MigrationFailed { sequence_id: s, .. } => *s = sequence_id,
+            Event::MigrationRolledBack { sequence_id: s, .. } => *s = sequence_id,
+            Event::ReplayStarted { sequence_id: s, .. } => *s = sequence_id,
+            Event::ReplayCompleted { sequence_id: s, .. } => *s = sequence_id,
+            Event::ReplayDivergence { sequence_id: s, .. } => *s = sequence_id,
+            Event::ReplayInvariantViolation { sequence_id: s, .. } => *s = sequence_id,
+            Event::PressureChanged { sequence_id: s, .. } => *s = sequence_id,
+            Event::BackpressureActivated { sequence_id: s, .. } => *s = sequence_id,
+            Event::BackpressureDeactivated { sequence_id: s, .. } => *s = sequence_id,
+            Event::BackendHealthChanged { sequence_id: s, .. } => *s = sequence_id,
+            Event::RetryAttempted { sequence_id: s, .. } => *s = sequence_id,
+            Event::OperationFailed { sequence_id: s, .. } => *s = sequence_id,
+            Event::InvariantViolation { sequence_id: s, .. } => *s = sequence_id,
+            Event::IoRequestIssued { sequence_id: s, .. } => *s = sequence_id,
+            Event::IoRequestCompleted { sequence_id: s, .. } => *s = sequence_id,
+            Event::IoRequestFailed { sequence_id: s, .. } => *s = sequence_id,
+            Event::IoFlushIssued { sequence_id: s, .. } => *s = sequence_id,
+            Event::IoFlushCompleted { sequence_id: s, .. } => *s = sequence_id,
+            Event::IoBufferStateChange { sequence_id: s, .. } => *s = sequence_id,
+        }
+        self
+    }
+
     /// Get the [`ChunkId`] associated with this event, if any.
     pub fn chunk_id(&self) -> Option<ChunkId> {
         match self {
@@ -334,7 +502,18 @@ impl Event {
             | Event::AllocationFreed { .. }
             | Event::AllocationFailed { .. } => "allocation",
 
-            Event::MigrationStarted { .. }
+            Event::Eviction { .. }
+            | Event::Retrieve { .. }
+            | Event::TransferCompleted { .. }
+            | Event::TransferFailed { .. }
+            | Event::Store { .. }
+            | Event::Evict { .. } => "orchestration",
+
+            Event::QueueEnqueue { .. }
+            | Event::QueueDequeue { .. } => "scheduler",
+
+            Event::MigrationDecision { .. }
+            | Event::MigrationStarted { .. }
             | Event::MigrationCompleted { .. }
             | Event::MigrationFailed { .. }
             | Event::MigrationRolledBack { .. } => "migration",
@@ -369,6 +548,15 @@ impl Event {
             Event::AllocationCreated { .. } => "allocation_created",
             Event::AllocationFreed { .. } => "allocation_freed",
             Event::AllocationFailed { .. } => "allocation_failed",
+            Event::Eviction { .. } => "eviction",
+            Event::Retrieve { .. } => "retrieve",
+            Event::TransferCompleted { .. } => "transfer_completed",
+            Event::TransferFailed { .. } => "transfer_failed",
+            Event::Store { .. } => "store",
+            Event::Evict { .. } => "evict",
+            Event::QueueEnqueue { .. } => "queue_enqueue",
+            Event::QueueDequeue { .. } => "queue_dequeue",
+            Event::MigrationDecision { .. } => "migration_decision",
             Event::MigrationStarted { .. } => "migration_started",
             Event::MigrationCompleted { .. } => "migration_completed",
             Event::MigrationFailed { .. } => "migration_failed",
@@ -408,6 +596,7 @@ mod tests {
             chunk_id: id,
             tier: TierId::Ram,
             size: 1024,
+            sequence_id: 0,
         };
         assert_eq!(event.chunk_id(), Some(id));
 
@@ -415,6 +604,7 @@ mod tests {
             chunk_id: id,
             from: TierId::Ram,
             to: TierId::Disk,
+            sequence_id: 0,
         };
         assert_eq!(event.chunk_id(), Some(id));
 
@@ -422,6 +612,7 @@ mod tests {
             tier: TierId::Ram,
             old: PressureState::new(),
             new: PressureState::new(),
+            sequence_id: 0,
         };
         assert_eq!(event.chunk_id(), None);
     }
@@ -432,6 +623,7 @@ mod tests {
             chunk_id: ChunkId::from_data(b"test"),
             tier: TierId::GpuVram,
             size: 1024,
+            sequence_id: 0,
         };
         assert_eq!(event.tier(), Some(TierId::GpuVram));
 
@@ -439,12 +631,14 @@ mod tests {
             tier: TierId::Disk,
             old: BackendHealth::Healthy,
             new: BackendHealth::Degraded,
+            sequence_id: 0,
         };
         assert_eq!(event.tier(), Some(TierId::Disk));
 
         let event = Event::OperationFailed {
             operation: "store".to_string(),
             reason: "full".to_string(),
+            sequence_id: 0,
         };
         assert_eq!(event.tier(), None);
     }
@@ -456,6 +650,7 @@ mod tests {
                 chunk_id: ChunkId::from_data(b"t"),
                 tier: TierId::Ram,
                 size: 1,
+                sequence_id: 0,
             }
             .category(),
             "allocation"
@@ -465,6 +660,7 @@ mod tests {
                 chunk_id: ChunkId::from_data(b"t"),
                 from: TierId::Ram,
                 to: TierId::Disk,
+                sequence_id: 0,
             }
             .category(),
             "migration"
@@ -472,6 +668,7 @@ mod tests {
         assert_eq!(
             Event::ReplayStarted {
                 trace_path: "trace.bin".to_string(),
+                sequence_id: 0,
             }
             .category(),
             "replay"
@@ -481,6 +678,7 @@ mod tests {
                 tier: TierId::Ram,
                 old: PressureState::new(),
                 new: PressureState::new(),
+                sequence_id: 0,
             }
             .category(),
             "pressure"
@@ -489,6 +687,7 @@ mod tests {
             Event::OperationFailed {
                 operation: "store".to_string(),
                 reason: "err".to_string(),
+                sequence_id: 0,
             }
             .category(),
             "failure"
@@ -498,6 +697,7 @@ mod tests {
                 rule: "test".to_string(),
                 details: "bad".to_string(),
                 severity: InvariantSeverity::Error,
+                sequence_id: 0,
             }
             .category(),
             "invariant_violation"
@@ -511,6 +711,7 @@ mod tests {
                 chunk_id: ChunkId::from_data(b"t"),
                 tier: TierId::Ram,
                 size: 1,
+                sequence_id: 0,
             }
             .event_name(),
             "allocation_created"
@@ -520,6 +721,7 @@ mod tests {
                 chunk_id: ChunkId::from_data(b"t"),
                 from: TierId::Ram,
                 to: TierId::Disk,
+                sequence_id: 0,
             }
             .event_name(),
             "migration_rolled_back"
@@ -556,6 +758,7 @@ mod tests {
             from: TierId::Ram,
             to: TierId::Disk,
             duration_ms: 150,
+            sequence_id: 0,
         };
 
         let json = serde_json::to_string(&event).expect("serialize event");
@@ -574,84 +777,102 @@ mod tests {
                 chunk_id: id,
                 tier: TierId::Ram,
                 size: 1024,
+                sequence_id: 0,
             },
             Event::AllocationFreed {
                 chunk_id: id,
                 tier: TierId::Ram,
+                sequence_id: 0,
             },
             Event::AllocationFailed {
                 chunk_id: id,
                 reason: "out of memory".to_string(),
+                sequence_id: 0,
             },
             Event::MigrationStarted {
                 chunk_id: id,
                 from: TierId::Ram,
                 to: TierId::Disk,
+                sequence_id: 0,
             },
             Event::MigrationCompleted {
                 chunk_id: id,
                 from: TierId::Ram,
                 to: TierId::Disk,
                 duration_ms: 100,
+                sequence_id: 0,
             },
             Event::MigrationFailed {
                 chunk_id: id,
                 from: TierId::Ram,
                 to: TierId::Disk,
                 reason: "timeout".to_string(),
+                sequence_id: 0,
             },
             Event::MigrationRolledBack {
                 chunk_id: id,
                 from: TierId::Ram,
                 to: TierId::Disk,
+                sequence_id: 0,
             },
             Event::ReplayStarted {
                 trace_path: "trace.bin".to_string(),
+                sequence_id: 0,
             },
             Event::ReplayCompleted {
                 trace_path: "trace.bin".to_string(),
                 events: 100,
                 duration_ms: 50,
+                sequence_id: 0,
             },
             Event::ReplayDivergence {
                 trace_path: "trace.bin".to_string(),
                 expected: "stored".to_string(),
                 actual: "failed".to_string(),
+                sequence_id: 0,
             },
             Event::ReplayInvariantViolation {
                 rule: "no_orphans".to_string(),
                 details: "orphaned transfer".to_string(),
+                sequence_id: 0,
             },
             Event::PressureChanged {
                 tier: TierId::Ram,
                 old: PressureState::new(),
                 new: PressureState::new(),
+                sequence_id: 0,
             },
             Event::BackpressureActivated {
                 tier: TierId::Ram,
                 level: "soft".to_string(),
+                sequence_id: 0,
             },
             Event::BackpressureDeactivated {
                 tier: TierId::Ram,
+                sequence_id: 0,
             },
             Event::BackendHealthChanged {
                 tier: TierId::Disk,
                 old: BackendHealth::Healthy,
                 new: BackendHealth::Degraded,
+                sequence_id: 0,
             },
             Event::RetryAttempted {
                 chunk_id: id,
                 attempt: 2,
                 max_attempts: 3,
+                sequence_id: 0,
             },
             Event::OperationFailed {
                 operation: "store".to_string(),
                 reason: "backend unavailable".to_string(),
+                sequence_id: 0,
             },
             Event::InvariantViolation {
                 rule: "no_illegal_transitions".to_string(),
                 details: "Allocated -> Cached".to_string(),
                 severity: InvariantSeverity::Error,
+                sequence_id: 0,
             },
         ];
     }

@@ -202,6 +202,17 @@ impl MigrationEngine {
                     reason: format!("pressure={:.2}", pressure.max_pressure()),
                     timestamp: now,
                 });
+
+                // Emit unified MigrationDecision event
+                if let Some(ref emitter) = self.event_emitter {
+                    let _ = emitter.try_emit(Event::MigrationDecision {
+                        chunk_id: *chunk_id,
+                        from: meta.tier,
+                        to: target_tier,
+                        decision: format!("pressure={:.2}", pressure.max_pressure()),
+                        sequence_id: 0,
+                    });
+                }
             } else {
                 let mut stats = self.stats.lock().unwrap();
                 stats.skipped += 1;
@@ -274,6 +285,17 @@ impl MigrationEngine {
                     hotness_score: hotness.score,
                     identified_at: now,
                 });
+
+                // Emit unified MigrationDecision event for promotion
+                if let Some(ref emitter) = self.event_emitter {
+                    let _ = emitter.try_emit(Event::MigrationDecision {
+                        chunk_id: *chunk_id,
+                        from: meta.tier,
+                        to: target_tier,
+                        decision: format!("promotion hotness={:.2}", hotness.score),
+                        sequence_id: 0,
+                    });
+                }
             }
         }
 
@@ -339,6 +361,17 @@ impl MigrationEngine {
                         reason: EvictionReason::Pressure,
                         timestamp: now,
                     });
+
+                    // Emit unified MigrationDecision event for eviction
+                    if let Some(ref emitter) = self.event_emitter {
+                        let _ = emitter.try_emit(Event::MigrationDecision {
+                            chunk_id: evict_id,
+                            from: meta.tier,
+                            to: target_tier,
+                            decision: format!("eviction pressure={:.2}", pressure.max_pressure()),
+                            sequence_id: 0,
+                        });
+                    }
                 }
             }
         }
@@ -391,6 +424,7 @@ impl MigrationEngine {
                 from: TierId::Ram,
                 to: TierId::Disk,
                 duration_ms: 0,
+                sequence_id: 0,
             });
         }
     }

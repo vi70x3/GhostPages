@@ -18,6 +18,7 @@
 //!     chunk_id: ChunkId::from_data(b"test"),
 //!     tier: TierId::Ram,
 //!     size: 4096,
+//!     sequence_id: 0,
 //! };
 //! // handler.handle(&event).await.unwrap();
 //! ```
@@ -69,7 +70,7 @@ impl EventHandler for TracingHandler {
             // Log event-specific details
             match event {
                 Event::AllocationCreated {
-                    chunk_id, tier, size,
+                    chunk_id, tier, size, ..
                 } => {
                     tracing::info!(
                         chunk_id = %chunk_id,
@@ -78,21 +79,21 @@ impl EventHandler for TracingHandler {
                         "Chunk allocated"
                     );
                 }
-                Event::AllocationFreed { chunk_id, tier } => {
+                Event::AllocationFreed { chunk_id, tier, .. } => {
                     tracing::info!(
                         chunk_id = %chunk_id,
                         tier = ?tier,
                         "Chunk freed"
                     );
                 }
-                Event::AllocationFailed { chunk_id, reason } => {
+                Event::AllocationFailed { chunk_id, reason, .. } => {
                     tracing::warn!(
                         chunk_id = %chunk_id,
                         reason,
                         "Allocation failed"
                     );
                 }
-                Event::MigrationStarted { chunk_id, from, to } => {
+                Event::MigrationStarted { chunk_id, from, to, .. } => {
                     tracing::info!(
                         chunk_id = %chunk_id,
                         from = ?from,
@@ -105,6 +106,7 @@ impl EventHandler for TracingHandler {
                     from,
                     to,
                     duration_ms,
+                    ..
                 } => {
                     tracing::info!(
                         chunk_id = %chunk_id,
@@ -119,6 +121,7 @@ impl EventHandler for TracingHandler {
                     from,
                     to,
                     reason,
+                    ..
                 } => {
                     tracing::error!(
                         chunk_id = %chunk_id,
@@ -128,7 +131,7 @@ impl EventHandler for TracingHandler {
                         "Migration failed"
                     );
                 }
-                Event::MigrationRolledBack { chunk_id, from, to } => {
+                Event::MigrationRolledBack { chunk_id, from, to, .. } => {
                     tracing::warn!(
                         chunk_id = %chunk_id,
                         from = ?from,
@@ -136,7 +139,7 @@ impl EventHandler for TracingHandler {
                         "Migration rolled back"
                     );
                 }
-                Event::ReplayStarted { trace_path } => {
+                Event::ReplayStarted { trace_path, .. } => {
                     tracing::info!(
                         trace_path,
                         "Replay started"
@@ -146,6 +149,7 @@ impl EventHandler for TracingHandler {
                     trace_path,
                     events,
                     duration_ms,
+                    ..
                 } => {
                     tracing::info!(
                         trace_path,
@@ -158,6 +162,7 @@ impl EventHandler for TracingHandler {
                     trace_path,
                     expected,
                     actual,
+                    ..
                 } => {
                     tracing::error!(
                         trace_path,
@@ -166,14 +171,14 @@ impl EventHandler for TracingHandler {
                         "Replay diverged"
                     );
                 }
-                Event::ReplayInvariantViolation { rule, details } => {
+                Event::ReplayInvariantViolation { rule, details, .. } => {
                     tracing::warn!(
                         rule,
                         details,
                         "Replay invariant violation"
                     );
                 }
-                Event::PressureChanged { tier, old, new } => {
+                Event::PressureChanged { tier, old, new, .. } => {
                     tracing::info!(
                         tier = ?tier,
                         memory_old = old.memory_pressure,
@@ -185,20 +190,20 @@ impl EventHandler for TracingHandler {
                         "Pressure changed"
                     );
                 }
-                Event::BackpressureActivated { tier, level } => {
+                Event::BackpressureActivated { tier, level, .. } => {
                     tracing::warn!(
                         tier = ?tier,
                         level,
                         "Backpressure activated"
                     );
                 }
-                Event::BackpressureDeactivated { tier } => {
+                Event::BackpressureDeactivated { tier, .. } => {
                     tracing::info!(
                         tier = ?tier,
                         "Backpressure deactivated"
                     );
                 }
-                Event::BackendHealthChanged { tier, old, new } => {
+                Event::BackendHealthChanged { tier, old, new, .. } => {
                     tracing::warn!(
                         tier = ?tier,
                         old = ?old,
@@ -210,6 +215,7 @@ impl EventHandler for TracingHandler {
                     chunk_id,
                     attempt,
                     max_attempts,
+                    ..
                 } => {
                     tracing::warn!(
                         chunk_id = %chunk_id,
@@ -218,7 +224,7 @@ impl EventHandler for TracingHandler {
                         "Retry attempted"
                     );
                 }
-                Event::OperationFailed { operation, reason } => {
+                Event::OperationFailed { operation, reason, .. } => {
                     tracing::error!(
                         operation,
                         reason,
@@ -229,6 +235,7 @@ impl EventHandler for TracingHandler {
                     rule,
                     details,
                     severity,
+                    ..
                 } => {
                     tracing::error!(
                         rule,
@@ -241,6 +248,7 @@ impl EventHandler for TracingHandler {
                     operation,
                     chunk_id,
                     tier,
+                    ..
                 } => {
                     tracing::info!(
                         chunk_id = %chunk_id,
@@ -254,6 +262,7 @@ impl EventHandler for TracingHandler {
                     chunk_id,
                     tier,
                     duration_ticks,
+                    ..
                 } => {
                     tracing::info!(
                         chunk_id = %chunk_id,
@@ -268,6 +277,7 @@ impl EventHandler for TracingHandler {
                     chunk_id,
                     tier,
                     error,
+                    ..
                 } => {
                     tracing::error!(
                         chunk_id = %chunk_id,
@@ -277,12 +287,13 @@ impl EventHandler for TracingHandler {
                         "I/O request failed"
                     );
                 }
-                Event::IoFlushIssued { tier } => {
+                Event::IoFlushIssued { tier, .. } => {
                     tracing::info!(tier = ?tier, "I/O flush issued");
                 }
                 Event::IoFlushCompleted {
                     tier,
                     duration_ticks,
+                    ..
                 } => {
                     tracing::info!(
                         tier = ?tier,
@@ -294,12 +305,110 @@ impl EventHandler for TracingHandler {
                     tier,
                     buffered,
                     capacity,
+                    ..
                 } => {
                     tracing::debug!(
                         tier = ?tier,
                         buffered,
                         capacity,
                         "I/O buffer state changed"
+                    );
+                }
+                Event::Eviction {
+                    chunk_id, tier, reason, ..
+                } => {
+                    tracing::info!(
+                        chunk_id = %chunk_id,
+                        tier = ?tier,
+                        reason,
+                        "Chunk evicted"
+                    );
+                }
+                Event::Retrieve {
+                    key, hit, ..
+                } => {
+                    tracing::info!(
+                        key,
+                        hit,
+                        "Retrieve operation"
+                    );
+                }
+                Event::TransferCompleted {
+                    chunk_id,
+                    from,
+                    to,
+                    duration_ms,
+                    ..
+                } => {
+                    tracing::info!(
+                        chunk_id = %chunk_id,
+                        from = ?from,
+                        to = ?to,
+                        duration_ms,
+                        "Transfer completed"
+                    );
+                }
+                Event::TransferFailed {
+                    chunk_id,
+                    from,
+                    to,
+                    reason,
+                    ..
+                } => {
+                    tracing::error!(
+                        chunk_id = %chunk_id,
+                        from = ?from,
+                        to = ?to,
+                        reason,
+                        "Transfer failed"
+                    );
+                }
+                Event::Store {
+                    key, value_size, ..
+                } => {
+                    tracing::info!(
+                        key,
+                        value_size,
+                        "Store operation"
+                    );
+                }
+                Event::Evict {
+                    key, ..
+                } => {
+                    tracing::info!(
+                        key,
+                        "Evict operation"
+                    );
+                }
+                Event::QueueEnqueue {
+                    task_id, ..
+                } => {
+                    tracing::info!(
+                        task_id,
+                        "Task enqueued"
+                    );
+                }
+                Event::QueueDequeue {
+                    task_id, ..
+                } => {
+                    tracing::info!(
+                        task_id,
+                        "Task dequeued"
+                    );
+                }
+                Event::MigrationDecision {
+                    chunk_id,
+                    from,
+                    to,
+                    decision,
+                    ..
+                } => {
+                    tracing::info!(
+                        chunk_id = %chunk_id,
+                        from = ?from,
+                        to = ?to,
+                        decision,
+                        "Migration decision"
                     );
                 }
             }
@@ -323,6 +432,7 @@ mod tests {
             chunk_id: ChunkId::from_data(b"test"),
             tier: TierId::Ram,
             size: 4096,
+            sequence_id: 0,
         };
         handler.handle(&event).await.unwrap();
     }
@@ -337,84 +447,102 @@ mod tests {
                 chunk_id: id,
                 tier: TierId::Ram,
                 size: 1024,
+                sequence_id: 0,
             },
             Event::AllocationFreed {
                 chunk_id: id,
                 tier: TierId::Ram,
+                sequence_id: 0,
             },
             Event::AllocationFailed {
                 chunk_id: id,
                 reason: "oom".to_string(),
+                sequence_id: 0,
             },
             Event::MigrationStarted {
                 chunk_id: id,
                 from: TierId::Ram,
                 to: TierId::Disk,
+                sequence_id: 0,
             },
             Event::MigrationCompleted {
                 chunk_id: id,
                 from: TierId::Ram,
                 to: TierId::Disk,
                 duration_ms: 100,
+                sequence_id: 0,
             },
             Event::MigrationFailed {
                 chunk_id: id,
                 from: TierId::Ram,
                 to: TierId::Disk,
                 reason: "timeout".to_string(),
+                sequence_id: 0,
             },
             Event::MigrationRolledBack {
                 chunk_id: id,
                 from: TierId::Ram,
                 to: TierId::Disk,
+                sequence_id: 0,
             },
             Event::ReplayStarted {
                 trace_path: "trace.bin".to_string(),
+                sequence_id: 0,
             },
             Event::ReplayCompleted {
                 trace_path: "trace.bin".to_string(),
                 events: 100,
                 duration_ms: 50,
+                sequence_id: 0,
             },
             Event::ReplayDivergence {
                 trace_path: "trace.bin".to_string(),
                 expected: "stored".to_string(),
                 actual: "failed".to_string(),
+                sequence_id: 0,
             },
             Event::ReplayInvariantViolation {
                 rule: "no_orphans".to_string(),
                 details: "orphan".to_string(),
+                sequence_id: 0,
             },
             Event::PressureChanged {
                 tier: TierId::Ram,
                 old: PressureState::new(),
                 new: PressureState::new(),
+                sequence_id: 0,
             },
             Event::BackpressureActivated {
                 tier: TierId::Ram,
                 level: "soft".to_string(),
+                sequence_id: 0,
             },
             Event::BackpressureDeactivated {
                 tier: TierId::Ram,
+                sequence_id: 0,
             },
             Event::BackendHealthChanged {
                 tier: TierId::Disk,
                 old: BackendHealth::Healthy,
                 new: BackendHealth::Degraded,
+                sequence_id: 0,
             },
             Event::RetryAttempted {
                 chunk_id: id,
                 attempt: 2,
                 max_attempts: 3,
+                sequence_id: 0,
             },
             Event::OperationFailed {
                 operation: "store".to_string(),
                 reason: "full".to_string(),
+                sequence_id: 0,
             },
             Event::InvariantViolation {
                 rule: "test".to_string(),
                 details: "bad".to_string(),
                 severity: InvariantSeverity::Error,
+                sequence_id: 0,
             },
         ];
 

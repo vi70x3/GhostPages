@@ -1,10 +1,19 @@
 # Architecture Overview
 
+## Global Runtime Clock: EventMultiplexer
+
+The `EventMultiplexer` is the **global runtime clock** for GhostPages. Every state mutation in the system emits a unified `Event` through the `EventEmitter`, which flows into the `EventMultiplexer`. The `EventMultiplexer` then fans out to all registered handlers:
+
+- **`TracingHandler`** — records each event as a structured `tracing::info_span!` entry
+- **`MetricsBridge`** — updates Prometheus counters per event category
+
+This design ensures that **every state change is observable** and **no silent retries or hidden side effects** exist outside the event flow. The event stream is the single source of truth for system behavior.
+
 ## Ownership Contract
 - **`ghost-daemon`** is the sole orchestrator. It owns the **state machine** and is the only component that mutates chunk state. All other crates must treat the state as read-only.
 - **`ghost-core`** provides the canonical `StateMachine` implementation and related types (`ChunkState`, `PressureState`). It does **not** perform any state transitions itself.
-- **`ghost-core/src/events.rs`** defines the unified `Event` taxonomy (18 variants across 6 categories: Allocation, Migration, Replay, Pressure, Failure, InvariantViolation). All observability events flow through this type.
-- **`ghost-core/src/emitter.rs`** provides `EventEmitter` (mpsc-based typed event emission) with both async `emit()`/`typed()` methods and synchronous `try_emit()` for non-async contexts. `EventEmitter` is `Clone`-able so it can be shared across subsystems.
+- **`ghost-core/src/events.rs`** defines the unified `Event` taxonomy (33 variants across 9 categories: Allocation, Orchestration, Scheduler, Migration, Replay, Pressure, Failure, InvariantViolation, IoEvent). All observability events flow through this type.
+- **`ghost-core/src/emitter.rs`** provides `EventEmitter` (mpsc-based typed event emission) with both async `emit()`/`typed()` methods and synchronous `try_emit()` for non-async contexts. `EventEmitter` is `Clone`-able so it can be shared across subsystems. An `AtomicU64` counter auto-stamps `sequence_id` at emission time for total ordering.
 - **`ghost-core/src/event_multiplexer.rs`** provides `EventMultiplexer` for fan-out event distribution to multiple `EventHandler` implementations.
 - **`ghost-core/src/tracing_bridge.rs`** bridges unified `Event`s to structured `tracing::info_span!` entries via `TracingHandler`.
 - **`ghost-metrics/src/event_bridge.rs`** bridges unified `Event`s to Prometheus counter updates via `MetricsBridge` and `EventBridgeMetrics`.

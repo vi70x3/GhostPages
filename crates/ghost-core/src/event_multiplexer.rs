@@ -166,6 +166,7 @@ mod tests {
             chunk_id: ChunkId::from_data(b"test"),
             tier: TierId::Ram,
             size: 1024,
+            sequence_id: 0,
         };
         tx.send(event.clone()).await.unwrap();
         tx.send(event.clone()).await.unwrap();
@@ -185,6 +186,7 @@ mod tests {
         let event = Event::OperationFailed {
             operation: "test".to_string(),
             reason: "test".to_string(),
+            sequence_id: 0,
         };
         handler.handle(&event).await.unwrap();
     }

@@ -22,6 +22,7 @@ pub mod error;
 pub mod event_multiplexer;
 pub mod events;
 pub mod hotness;
+pub mod invariant_registry;
 pub mod io_abstraction;
 pub mod io_events;
 pub mod state;

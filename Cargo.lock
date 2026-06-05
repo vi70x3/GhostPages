@@ -451,6 +451,7 @@ name = "ghost-replay"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "blake3",
  "crc32fast",
  "csv",
  "ghost-core",
@@ -491,6 +492,9 @@ dependencies = [
  "bytes",
  "ghost-core",
  "parking_lot",
+ "proptest",
+ "rand 0.8.6",
+ "rand_chacha 0.3.1",
  "tempfile",
  "thiserror",
  "tokio",

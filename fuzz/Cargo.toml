@@ -6,7 +6,12 @@ edition = "2021"
 [dependencies]
 ghost-core = { path = "../crates/ghost-core" }
 ghost-compress = { path = "../crates/ghost-compress" }
+ghost-tier = { path = "../crates/ghost-tier" }
+ghost-sim = { path = "../crates/ghost-sim" }
+ghost-ipc = { path = "../crates/ghost-ipc" }
+ghost-replay = { path = "../crates/ghost-replay" }
 libfuzzer-sys.workspace = true
+tokio.workspace = true
 
 [[bin]]
 name = "chunk_roundtrip"
@@ -19,3 +24,19 @@ path = "fuzz_targets/chunk_idempotent.rs"
 [[bin]]
 name = "compression_roundtrip"
 path = "fuzz_targets/compression_roundtrip.rs"
+
+[[bin]]
+name = "fuzz_allocation_metadata"
+path = "fuzz_targets/fuzz_allocation_metadata.rs"
+
+[[bin]]
+name = "fuzz_migration_sequences"
+path = "fuzz_targets/fuzz_migration_sequences.rs"
+
+[[bin]]
+name = "fuzz_ipc_frames"
+path = "fuzz_targets/fuzz_ipc_frames.rs"
+
+[[bin]]
+name = "fuzz_replay_records"
+path = "fuzz_targets/fuzz_replay_records.rs"

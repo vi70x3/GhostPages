@@ -6,6 +6,8 @@
 
 pub mod backend;
 pub mod ram;
+pub mod tracker;
 
 pub use backend::{Allocation, BackendData, BackendError, StorageBackend};
 pub use ram::RamBackend;
+pub use tracker::AllocationTracker;

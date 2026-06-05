@@ -117,7 +117,7 @@ async fn test_trace_replay_metrics() {
 #[tokio::test]
 async fn test_trace_log_direct_replay() {
     // Test that TraceLog events can be replayed directly
-    let _trace_log = Arc::new(TraceLog::new(10_000));
+    let trace_log = Arc::new(TraceLog::new(10_000));
 
     // Record events directly
     use ghost_core::trace::TraceEvent;

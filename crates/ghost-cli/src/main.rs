@@ -111,6 +111,38 @@ enum Commands {
         stop_on_error: bool,
     },
 
+    /// Verify replay determinism and stability of a trace file.
+    ReplayVerify {
+        /// Path to the trace file.
+        file: std::path::PathBuf,
+        /// Number of determinism rounds (replay N times and compare checksums).
+        #[arg(long, default_value = "3")]
+        rounds: u32,
+        /// Stop on first validation error during replay.
+        #[arg(long)]
+        stop_on_error: bool,
+    },
+
+    /// Compare two trace files for divergence.
+    ReplayCompare {
+        /// Path to the baseline trace file.
+        baseline: std::path::PathBuf,
+        /// Path to the candidate trace file.
+        candidate: std::path::PathBuf,
+    },
+
+    /// Run invariant validation on a trace file.
+    ReplayInvariants {
+        /// Path to the trace file.
+        file: std::path::PathBuf,
+    },
+
+    /// Compute and display the deterministic checksum of a trace file.
+    ReplayChecksum {
+        /// Path to the trace file.
+        file: std::path::PathBuf,
+    },
+
     /// Export a trace file to another format.
     ExportTrace {
         /// Path to the input trace file.
@@ -299,6 +331,240 @@ async fn main() -> Result<()> {
                     println!("  Event {}: {}", err.event_index, err.message);
                 }
             }
+        }
+
+        Commands::ReplayVerify {
+            file,
+            rounds,
+            stop_on_error,
+        } => {
+            use ghost_replay::{ReplayConfig, ReplayVerifier, VerifierConfig};
+
+            let verify_config = VerifierConfig {
+                iterations: rounds as usize,
+                verify_checksums: true,
+                verify_invariants: true,
+                stop_on_failure: stop_on_error,
+                replay_config: ReplayConfig::default(),
+            };
+
+            let verifier = ReplayVerifier::new(verify_config);
+
+            let result = verifier
+                .verify_stability(&file)
+                .with_context(|| format!("verification failed for: {}", file.display()))?;
+
+            println!("=== Replay Verification ===");
+            println!("File: {}", file.display());
+            println!("Determinism rounds: {}", rounds);
+            println!(
+                "Status: {}",
+                if result.passed() {
+                    "PASSED"
+                } else {
+                    "FAILED"
+                }
+            );
+            println!("Iterations run: {}", result.iterations_run);
+            println!();
+
+            if result.deterministic {
+                println!("✓ Determinism: PASSED (all rounds produced identical checksums)");
+            } else {
+                println!("✗ Determinism: FAILED (checksum mismatch between rounds)");
+            }
+
+            if result.violations.is_empty() {
+                println!("✓ Invariants: PASSED (no violations)");
+            } else {
+                println!(
+                    "✗ Invariants: FAILED ({} violations)",
+                    result.violations.len()
+                );
+            }
+
+            if let Some(ref div) = result.divergence {
+                println!();
+                println!("=== Divergence Report ===");
+                println!("{}", div.summary());
+                for d in &div.divergences {
+                    println!("  {:?}", d);
+                }
+            }
+
+            if !result.violations.is_empty() {
+                println!();
+                println!("=== Invariant Violations ===");
+                for v in &result.violations {
+                    println!("  [{:?}] {}", v.severity, v.message);
+                }
+            }
+
+            if !result.passed() {
+                std::process::exit(1);
+            }
+        }
+
+        Commands::ReplayCompare {
+            baseline,
+            candidate,
+        } => {
+            use ghost_replay::divergence::compare_traces;
+
+            let report = compare_traces(&baseline, &candidate)
+                .with_context(|| {
+                    format!(
+                        "failed to compare traces: {} vs {}",
+                        baseline.display(),
+                        candidate.display()
+                    )
+                })?;
+
+            println!("=== Trace Comparison ===");
+            println!(
+                "Baseline:  {} ({} events)",
+                baseline.display(),
+                report.events_compared
+            );
+            println!(
+                "Candidate: {} ({} events)",
+                candidate.display(),
+                report.events_compared
+            );
+            println!();
+
+            if report.identical {
+                println!(
+                    "✓ Traces are IDENTICAL ({} events compared)",
+                    report.events_compared
+                );
+            } else {
+                println!(
+                    "✗ Traces DIVERGE at event {}",
+                    report
+                        .first_divergence_index
+                        .map(|i| i.to_string())
+                        .unwrap_or_else(|| "?".to_string())
+                );
+                println!("  Events compared: {}", report.events_compared);
+                println!("  Divergences found: {}", report.divergences.len());
+                println!();
+
+                for d in &report.divergences {
+                    match d {
+                        ghost_replay::DivergenceType::LengthMismatch {
+                            baseline_len,
+                            candidate_len,
+                        } => {
+                            println!(
+                                "  Length mismatch: baseline={} events, candidate={} events",
+                                baseline_len, candidate_len
+                            );
+                        }
+                        ghost_replay::DivergenceType::ContentMismatch { index, category } => {
+                            println!(
+                                "  Event {}: content mismatch (category: {:?})",
+                                index, category
+                            );
+                        }
+                        ghost_replay::DivergenceType::TimestampMismatch {
+                            index,
+                            baseline_ts,
+                            candidate_ts,
+                        } => {
+                            println!(
+                                "  Event {}: timestamp mismatch (baseline={}, candidate={})",
+                                index, baseline_ts, candidate_ts
+                            );
+                        }
+                        ghost_replay::DivergenceType::ChunkIdMismatch {
+                            index,
+                            baseline_chunk,
+                            candidate_chunk,
+                        } => {
+                            println!(
+                                "  Event {}: chunk ID mismatch (baseline={:?}, candidate={:?})",
+                                index, baseline_chunk, candidate_chunk
+                            );
+                        }
+                        ghost_replay::DivergenceType::TypeMismatch {
+                            index,
+                            baseline_type,
+                            candidate_type,
+                        } => {
+                            println!(
+                                "  Event {}: type mismatch (baseline={}, candidate={})",
+                                index, baseline_type, candidate_type
+                            );
+                        }
+                    }
+                }
+                std::process::exit(1);
+            }
+        }
+
+        Commands::ReplayInvariants { file } => {
+            use ghost_replay::{InvariantValidator, TraceReader};
+
+            let mut reader = TraceReader::open(&file)
+                .with_context(|| format!("failed to open trace file: {}", file.display()))?;
+            let events = reader
+                .read_all()
+                .with_context(|| format!("failed to read trace file: {}", file.display()))?;
+
+            let validator = InvariantValidator::with_defaults();
+            let violations = validator.validate(&events);
+
+            println!("=== Invariant Validation ===");
+            println!(
+                "File: {} ({} events)",
+                file.display(),
+                events.len()
+            );
+            println!("Invariants checked: {}", validator.len());
+            println!();
+
+            if violations.is_empty() {
+                println!("✓ All invariants passed.");
+            } else {
+                println!("✗ {} invariant violation(s) found:", violations.len());
+                println!();
+                for v in &violations {
+                    println!("  [{:?}] {}", v.severity, v.message);
+                    if let Some(idx) = v.event_index {
+                        println!("    at event index: {}", idx);
+                    }
+                    if let Some(ref chunk_id) = v.chunk_id {
+                        println!("    chunk: {}", chunk_id.short_hex());
+                    }
+                }
+                std::process::exit(1);
+            }
+        }
+
+        Commands::ReplayChecksum { file } => {
+            use ghost_replay::from_file;
+
+            let checksum = from_file(&file)
+                .with_context(|| format!("failed to compute checksum for: {}", file.display()))?;
+
+            fn hex8_display(bytes: &[u8]) -> String {
+                bytes
+                    .iter()
+                    .take(8)
+                    .map(|b| format!("{:02x}", b))
+                    .collect()
+            }
+
+            println!("=== Trace Checksum ===");
+            println!("File: {}", file.display());
+            println!("Events: {}", checksum.event_count);
+            println!();
+            println!("Total:     {}", hex8_display(&checksum.total));
+            println!("Content:   {}", hex8_display(&checksum.content));
+            println!("Migration: {}", hex8_display(&checksum.migration));
+            println!("State:     {}", hex8_display(&checksum.state));
+            println!("Other:     {}", hex8_display(&checksum.other));
         }
 
         Commands::ExportTrace {

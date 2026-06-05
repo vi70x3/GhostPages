@@ -8,6 +8,11 @@ license.workspace = true
 repository.workspace = true
 description = "Storage backend trait and tier implementations for GhostPages"
 
+[features]
+# Enable allocation tracking for debugging and stress testing.
+# When enabled, RamBackend records every allocation/deallocation.
+track-allocations = []
+
 [dependencies]
 ghost-core = { path = "../ghost-core" }
 blake3.workspace = true
@@ -20,3 +25,6 @@ bytes.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+proptest.workspace = true
+rand.workspace = true
+rand_chacha = "0.3"

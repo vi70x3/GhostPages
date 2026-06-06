@@ -14,7 +14,7 @@ use std::time::Instant;
 
 use crate::emitter::EventEmitter;
 use crate::error::GhostError;
-use crate::events::Event;
+use crate::events::{Event, EventRecord};
 use crate::hardware::{TransferSubmission, TransferFence};
 
 /// A staged transfer in the DMA-oriented pipeline.
@@ -288,7 +288,7 @@ mod tests {
     use super::*;
     use crate::hardware::BufferLocation;
 
-    fn test_emitter() -> (EventEmitter, tokio::sync::mpsc::Receiver<Event>) {
+    fn test_emitter() -> (EventEmitter, tokio::sync::mpsc::Receiver<EventRecord>) {
         let (tx, rx) = tokio::sync::mpsc::channel(256);
         (EventEmitter::new(tx), rx)
     }

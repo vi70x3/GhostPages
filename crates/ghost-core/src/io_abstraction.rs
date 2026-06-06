@@ -23,7 +23,7 @@ use std::time::Instant;
 use crate::emitter::EventEmitter;
 use crate::error::GhostResult;
 pub use crate::io_events::IoOperation;
-use crate::io_events::IoEvent;
+
 use crate::time::TimeProvider;
 use crate::types::{ChunkId, TierId};
 
@@ -411,7 +411,7 @@ mod tests {
     use std::time::Duration;
     use tokio::sync::mpsc;
 
-    fn test_scheduler() -> (IoScheduler, mpsc::Receiver<crate::events::Event>) {
+    fn test_scheduler() -> (IoScheduler, mpsc::Receiver<crate::events::EventRecord>) {
         let (tx, rx) = mpsc::channel(256);
         let emitter = EventEmitter::new(tx);
         let clock = DeterministicTimeProvider::new(1_700_000_000, Duration::from_millis(1));

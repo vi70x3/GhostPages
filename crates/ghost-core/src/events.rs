@@ -396,6 +396,67 @@ pub enum Event {
     },
 }
 
+// ─── Event Record ──────────────────────────────────────────────────────────────
+
+/// A wrapper around [`Event`] that adds ordering metadata.
+///
+/// `EventRecord` is the canonical type emitted by [`EventEmitter`] and
+/// consumed by [`EventMultiplexer`]. It provides:
+///
+/// - `sequence_id`: A monotonically increasing counter for total ordering.
+/// - `timestamp`: The emission time from [`TimeProvider`].
+/// - `event`: The inner [`Event`] payload.
+///
+/// # Ordering Contract
+///
+/// Per the Canonical Event Ordering Contract:
+/// - `sequence_id` MUST be strictly monotonically increasing.
+/// - `timestamp` MUST be non-decreasing.
+/// - The `EventMultiplexer` MUST deliver `EventRecord`s in `sequence_id` order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventRecord {
+    /// Monotonically increasing sequence ID.
+    ///
+    /// Assigned by [`EventEmitter`] at emission time. Provides a total order
+    /// across all events in a single process run.
+    pub sequence_id: u64,
+
+    /// Emission timestamp (seconds since Unix epoch).
+    ///
+    /// Sourced from the [`TimeProvider`] active at emission time.
+    pub timestamp: u64,
+
+    /// The inner event payload.
+    pub event: Event,
+}
+
+impl EventRecord {
+    /// Get the [`Event`] reference.
+    pub fn event(&self) -> &Event {
+        &self.event
+    }
+
+    /// Get the [`ChunkId`] associated with this event, if any.
+    pub fn chunk_id(&self) -> Option<ChunkId> {
+        self.event.chunk_id()
+    }
+
+    /// Get the [`TierId`] associated with this event, if any.
+    pub fn tier(&self) -> Option<TierId> {
+        self.event.tier()
+    }
+
+    /// Get the human-readable category name for this event.
+    pub fn category(&self) -> &'static str {
+        self.event.category()
+    }
+
+    /// Get the human-readable event name.
+    pub fn event_name(&self) -> &'static str {
+        self.event.event_name()
+    }
+}
+
 impl Event {
     /// Get the sequence ID for this event.
     ///

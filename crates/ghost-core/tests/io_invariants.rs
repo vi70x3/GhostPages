@@ -23,6 +23,7 @@ use ghost_core::invariant_registry::{
     io_completion_bounded, io_buffer_within_capacity,
     io_request_id_monotonic, io_failure_eventual,
 };
+use ghost_core::events::Event;
 use ghost_core::time::DeterministicTimeProvider;
 use ghost_core::types::{ChunkId, TierId};
 use std::collections::BTreeMap;
@@ -37,7 +38,7 @@ fn make_scheduler() -> IoScheduler {
     IoScheduler::new(Arc::new(clock), emitter, 256)
 }
 
-fn make_scheduler_with_channel() -> (IoScheduler, mpsc::Receiver<ghost_core::events::Event>) {
+fn make_scheduler_with_channel() -> (IoScheduler, mpsc::Receiver<ghost_core::events::EventRecord>) {
     let (tx, rx) = mpsc::channel(256);
     let emitter = ghost_core::emitter::EventEmitter::new(tx);
     let clock = DeterministicTimeProvider::new(1_700_000_000, Duration::from_millis(1));
@@ -251,8 +252,8 @@ fn test_invariant_events_emitted_for_io_lifecycle() {
     // Issue should emit IoRequestIssued
     let id = scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
     let event = rx.try_recv().expect("should receive IoRequestIssued");
-    match event {
-        ghost_core::events::Event::IoRequestIssued {
+    match event.event {
+        Event::IoRequestIssued {
             operation,
             chunk_id,
             tier: event_tier,
@@ -272,8 +273,8 @@ fn test_invariant_events_emitted_for_io_lifecycle() {
     let mut scheduler = scheduler;
     scheduler.complete(id, Ok(()));
     let event = rx.try_recv().expect("should receive IoRequestCompleted");
-    match event {
-        ghost_core::events::Event::IoRequestCompleted {
+    match event.event {
+        Event::IoRequestCompleted {
             operation,
             chunk_id,
             tier: event_tier,
@@ -303,41 +304,41 @@ fn test_invariant_flush_emits_events() {
     // Drain the IoRequestIssued events from the two issue() calls
     let event = rx.try_recv().expect("should receive first IoRequestIssued");
     assert!(matches!(
-        event,
-        ghost_core::events::Event::IoRequestIssued { .. }
+        event.event,
+        Event::IoRequestIssued { .. }
     ));
     let event = rx.try_recv().expect("should receive second IoRequestIssued");
     assert!(matches!(
-        event,
-        ghost_core::events::Event::IoRequestIssued { .. }
+        event.event,
+        Event::IoRequestIssued { .. }
     ));
 
     // Flush should emit IoFlushIssued first
     scheduler.flush();
 
     let event = rx.try_recv().expect("should receive IoFlushIssued");
-    match event {
-        ghost_core::events::Event::IoFlushIssued { tier: _, .. } => {}
+    match event.event {
+        Event::IoFlushIssued { tier: _, .. } => {}
         other => panic!("expected IoFlushIssued, got {:?}", other),
     }
 
     // Then IoRequestCompleted for each pending (2)
     let event = rx.try_recv().expect("should receive first IoRequestCompleted");
     assert!(matches!(
-        event,
-        ghost_core::events::Event::IoRequestCompleted { .. }
+        event.event,
+        Event::IoRequestCompleted { .. }
     ));
     let event = rx.try_recv().expect("should receive second IoRequestCompleted");
     assert!(matches!(
-        event,
-        ghost_core::events::Event::IoRequestCompleted { .. }
+        event.event,
+        Event::IoRequestCompleted { .. }
     ));
 
     // Then IoFlushCompleted
     let event = rx.try_recv().expect("should receive IoFlushCompleted");
     assert!(matches!(
-        event,
-        ghost_core::events::Event::IoFlushCompleted { .. }
+        event.event,
+        Event::IoFlushCompleted { .. }
     ));
 }
 

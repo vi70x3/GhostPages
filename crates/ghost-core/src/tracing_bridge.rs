@@ -20,14 +20,14 @@
 //!     size: 4096,
 //!     sequence_id: 0,
 //! };
-//! // handler.handle(&event).await.unwrap();
+//! // handler.handle(&EventRecord { sequence_id: 0, timestamp: 0, event: event.clone() }).await.unwrap();
 //! ```
 
 use std::future::Future;
 use std::pin::Pin;
 
 use crate::event_multiplexer::EventHandler;
-use crate::events::Event;
+use crate::events::{Event, EventRecord};
 
 #[cfg(test)]
 use crate::events::{BackendHealth, InvariantSeverity};
@@ -47,14 +47,14 @@ pub struct TracingHandler;
 impl EventHandler for TracingHandler {
     fn handle(
         &self,
-        event: &Event,
+        event: &EventRecord,
     ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + '_>>
     {
-        let event_name = event.event_name();
-        let category = event.category();
-        let chunk_id_str = event.chunk_id().map(|id| id.short_hex());
-        let tier_str = event.tier().map(|t| format!("{:?}", t));
-        let event = event.clone();
+        let event_name = event.event.event_name();
+        let category = event.event.category();
+        let chunk_id_str = event.event.chunk_id().map(|id| id.short_hex());
+        let tier_str = event.event.tier().map(|t| format!("{:?}", t));
+        let inner_event = event.event.clone();
 
         Box::pin(async move {
             let span = tracing::info_span!(
@@ -68,7 +68,7 @@ impl EventHandler for TracingHandler {
             let _guard = span.enter();
 
             // Log event-specific details
-            match event {
+            match inner_event {
                 Event::AllocationCreated {
                     chunk_id, tier, size, ..
                 } => {
@@ -481,7 +481,7 @@ mod tests {
             size: 4096,
             sequence_id: 0,
         };
-        handler.handle(&event).await.unwrap();
+        handler.handle(&EventRecord { sequence_id: 0, timestamp: 0, event: event.clone() }).await.unwrap();
     }
 
     #[tokio::test]
@@ -593,8 +593,8 @@ mod tests {
             },
         ];
 
-        for event in &events {
-            handler.handle(event).await.unwrap();
+        for event in &events { let event = EventRecord { sequence_id: 0, timestamp: 0, event: event.clone() };
+            handler.handle(&event).await.unwrap();
         }
     }
 }

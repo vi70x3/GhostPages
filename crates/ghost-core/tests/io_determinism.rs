@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 /// Create a deterministic IoScheduler with a fixed seed clock.
 fn make_scheduler(
     start_secs: u64,
-) -> (IoScheduler, mpsc::Receiver<ghost_core::events::Event>) {
+) -> (IoScheduler, mpsc::Receiver<ghost_core::events::EventRecord>) {
     let (tx, rx) = mpsc::channel(256);
     let emitter = EventEmitter::new(tx);
     let clock = DeterministicTimeProvider::new(start_secs, Duration::from_millis(1));

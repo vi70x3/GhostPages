@@ -1,13 +1,14 @@
 //! Typed event emitter for GhostPages.
 //!
-//! [`EventEmitter`] wraps an `mpsc::Sender<Event>` and provides typed
+//! [`EventEmitter`] wraps an `mpsc::Sender<EventRecord>` and provides typed
 //! convenience methods for emitting events from each category. Subsystems
 //! hold an `EventEmitter` and call the appropriate method instead of
 //! constructing raw `Event` values manually.
 //!
 //! Events are automatically stamped with a monotonically increasing
-//! [`sequence_id`](Event::sequence_id) at emission time, providing total
-//! ordering across all events emitted through this emitter.
+//! [`sequence_id`](EventRecord::sequence_id) and a timestamp at emission
+//! time, providing total ordering across all events emitted through this
+//! emitter.
 //!
 //! # Example
 //!
@@ -19,18 +20,18 @@
 //! let emitter = EventEmitter::new(tx);
 //!
 //! emitter.allocation_created(ChunkId::from_data(b"chunk1"), TierId::Ram, 4096);
-//! // rx.recv() would now return Event::AllocationCreated { ... }
+//! // rx.recv() would now return EventRecord { event: Event::AllocationCreated { ... }, ... }
 //! ```
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::mpsc;
 
-use crate::events::{BackendHealth, Event, InvariantSeverity};
+use crate::events::{BackendHealth, Event, EventRecord, InvariantSeverity};
 use crate::state::PressureState;
 use crate::types::{ChunkId, TierId};
 
-/// Typed event emitter that wraps an `mpsc::Sender<Event>`.
+/// Typed event emitter that wraps an `mpsc::Sender<EventRecord>`.
 ///
 /// Use [`EventEmitter::new`] to create an emitter, then call the typed
 /// methods to emit events. The emitter is `Clone` so it can be shared
@@ -41,7 +42,7 @@ use crate::types::{ChunkId, TierId};
 /// emitter are totally ordered.
 #[derive(Clone)]
 pub struct EventEmitter {
-    tx: mpsc::Sender<Event>,
+    tx: mpsc::Sender<EventRecord>,
     sequence_counter: std::sync::Arc<AtomicU64>,
 }
 
@@ -58,7 +59,7 @@ impl EventEmitter {
     ///
     /// Sequence ids start at 1 and increase monotonically with each
     /// emission.
-    pub fn new(tx: mpsc::Sender<Event>) -> Self {
+    pub fn new(tx: mpsc::Sender<EventRecord>) -> Self {
         Self {
             tx,
             sequence_counter: std::sync::Arc::new(AtomicU64::new(1)),
@@ -70,9 +71,13 @@ impl EventEmitter {
         self.sequence_counter.fetch_add(1, Ordering::SeqCst)
     }
 
-    /// Stamp an event with the next sequence id and return it.
-    fn stamp(&self, event: Event) -> Event {
-        event.with_sequence_id(self.next_sequence_id())
+    /// Create an EventRecord with the next sequence id and current timestamp.
+    fn make_record(&self, event: Event) -> EventRecord {
+        EventRecord {
+            sequence_id: self.next_sequence_id(),
+            timestamp: current_timestamp(),
+            event,
+        }
     }
 
     /// Emit an event synchronously using `try_send`.
@@ -80,16 +85,16 @@ impl EventEmitter {
     /// Returns `Err` if the channel is full or closed. This is intended for
     /// use from non-async contexts (e.g. synchronous subsystem methods).
     ///
-    /// The event is automatically stamped with a monotonic sequence id.
-    pub fn try_emit(&self, event: Event) -> Result<(), mpsc::error::TrySendError<Event>> {
-        self.tx.try_send(self.stamp(event))
+    /// The event is automatically stamped with a monotonic sequence id and timestamp.
+    pub fn try_emit(&self, event: Event) -> Result<(), mpsc::error::TrySendError<EventRecord>> {
+        self.tx.try_send(self.make_record(event))
     }
 
     /// Emit an event, returning `Err` if the channel is closed.
     ///
-    /// The event is automatically stamped with a monotonic sequence id.
-    pub async fn emit(&self, event: Event) -> Result<(), mpsc::error::SendError<Event>> {
-        self.tx.send(self.stamp(event)).await
+    /// The event is automatically stamped with a monotonic sequence id and timestamp.
+    pub async fn emit(&self, event: Event) -> Result<(), mpsc::error::SendError<EventRecord>> {
+        self.tx.send(self.make_record(event)).await
     }
 
     // ── Allocation events ────────────────────────────────────────────────────
@@ -100,7 +105,7 @@ impl EventEmitter {
         chunk_id: ChunkId,
         tier: TierId,
         size: usize,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::AllocationCreated {
             chunk_id,
             tier,
@@ -115,7 +120,7 @@ impl EventEmitter {
         &self,
         chunk_id: ChunkId,
         tier: TierId,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::AllocationFreed { chunk_id, tier, sequence_id: 0 }).await
     }
 
@@ -124,7 +129,7 @@ impl EventEmitter {
         &self,
         chunk_id: ChunkId,
         reason: impl Into<String>,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::AllocationFailed {
             chunk_id,
             reason: reason.into(),
@@ -141,7 +146,7 @@ impl EventEmitter {
         chunk_id: ChunkId,
         from: TierId,
         to: TierId,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::MigrationStarted { chunk_id, from, to, sequence_id: 0 })
             .await
     }
@@ -153,7 +158,7 @@ impl EventEmitter {
         from: TierId,
         to: TierId,
         duration_ms: u64,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::MigrationCompleted {
             chunk_id,
             from,
@@ -171,7 +176,7 @@ impl EventEmitter {
         from: TierId,
         to: TierId,
         reason: impl Into<String>,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::MigrationFailed {
             chunk_id,
             from,
@@ -188,7 +193,7 @@ impl EventEmitter {
         chunk_id: ChunkId,
         from: TierId,
         to: TierId,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::MigrationRolledBack { chunk_id, from, to, sequence_id: 0 })
             .await
     }
@@ -199,7 +204,7 @@ impl EventEmitter {
     pub async fn replay_started(
         &self,
         trace_path: impl Into<String>,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::ReplayStarted {
             trace_path: trace_path.into(),
             sequence_id: 0,
@@ -213,7 +218,7 @@ impl EventEmitter {
         trace_path: impl Into<String>,
         events: usize,
         duration_ms: u64,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::ReplayCompleted {
             trace_path: trace_path.into(),
             events,
@@ -229,7 +234,7 @@ impl EventEmitter {
         trace_path: impl Into<String>,
         expected: impl Into<String>,
         actual: impl Into<String>,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::ReplayDivergence {
             trace_path: trace_path.into(),
             expected: expected.into(),
@@ -244,7 +249,7 @@ impl EventEmitter {
         &self,
         rule: impl Into<String>,
         details: impl Into<String>,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::ReplayInvariantViolation {
             rule: rule.into(),
             details: details.into(),
@@ -261,7 +266,7 @@ impl EventEmitter {
         tier: TierId,
         old: PressureState,
         new: PressureState,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::PressureChanged { tier, old, new, sequence_id: 0 }).await
     }
 
@@ -270,7 +275,7 @@ impl EventEmitter {
         &self,
         tier: TierId,
         level: impl Into<String>,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::BackpressureActivated {
             tier,
             level: level.into(),
@@ -283,7 +288,7 @@ impl EventEmitter {
     pub async fn backpressure_deactivated(
         &self,
         tier: TierId,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::BackpressureDeactivated { tier, sequence_id: 0 }).await
     }
 
@@ -295,7 +300,7 @@ impl EventEmitter {
         tier: TierId,
         old: BackendHealth,
         new: BackendHealth,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::BackendHealthChanged { tier, old, new, sequence_id: 0 })
             .await
     }
@@ -306,7 +311,7 @@ impl EventEmitter {
         chunk_id: ChunkId,
         attempt: u32,
         max_attempts: u32,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::RetryAttempted {
             chunk_id,
             attempt,
@@ -321,7 +326,7 @@ impl EventEmitter {
         &self,
         operation: impl Into<String>,
         reason: impl Into<String>,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::OperationFailed {
             operation: operation.into(),
             reason: reason.into(),
@@ -338,7 +343,7 @@ impl EventEmitter {
         rule: impl Into<String>,
         details: impl Into<String>,
         severity: InvariantSeverity,
-    ) -> Result<(), mpsc::error::SendError<Event>> {
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
         self.emit(Event::InvariantViolation {
             rule: rule.into(),
             details: details.into(),
@@ -347,6 +352,68 @@ impl EventEmitter {
         })
         .await
     }
+
+    // ── I/O events ───────────────────────────────────────────────────────────
+
+    /// Emit [`Event::IoRequestIssued`].
+    pub async fn io_request_issued(
+        &self,
+        operation: crate::io_events::IoOperation,
+        chunk_id: ChunkId,
+        tier: TierId,
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
+        self.emit(Event::IoRequestIssued {
+            operation,
+            chunk_id,
+            tier,
+            sequence_id: 0,
+        })
+        .await
+    }
+
+    /// Emit [`Event::IoRequestCompleted`].
+    pub async fn io_request_completed(
+        &self,
+        operation: crate::io_events::IoOperation,
+        chunk_id: ChunkId,
+        tier: TierId,
+        duration_ticks: u64,
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
+        self.emit(Event::IoRequestCompleted {
+            operation,
+            chunk_id,
+            tier,
+            duration_ticks,
+            sequence_id: 0,
+        })
+        .await
+    }
+
+    /// Emit [`Event::IoRequestFailed`].
+    pub async fn io_request_failed(
+        &self,
+        operation: crate::io_events::IoOperation,
+        chunk_id: ChunkId,
+        tier: TierId,
+        error: impl Into<String>,
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
+        self.emit(Event::IoRequestFailed {
+            operation,
+            chunk_id,
+            tier,
+            error: error.into(),
+            sequence_id: 0,
+        })
+        .await
+    }
+}
+
+/// Get the current timestamp in seconds since Unix epoch.
+fn current_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -355,7 +422,7 @@ impl EventEmitter {
 mod tests {
     use super::*;
 
-    fn test_channel() -> (EventEmitter, mpsc::Receiver<Event>) {
+    fn test_channel() -> (EventEmitter, mpsc::Receiver<EventRecord>) {
         let (tx, rx) = mpsc::channel(64);
         (EventEmitter::new(tx), rx)
     }
@@ -369,11 +436,15 @@ mod tests {
             .await
             .unwrap();
         match rx.recv().await.unwrap() {
-            Event::AllocationCreated {
-                chunk_id,
-                tier,
-                size,
+            EventRecord {
+                event: Event::AllocationCreated {
+                    chunk_id,
+                    tier,
+                    size,
+                    ..
+                },
                 sequence_id,
+                ..
             } => {
                 assert_eq!(chunk_id, id);
                 assert_eq!(tier, TierId::Ram);
@@ -393,12 +464,16 @@ mod tests {
             .await
             .unwrap();
         match rx.recv().await.unwrap() {
-            Event::MigrationCompleted {
-                chunk_id,
-                from,
-                to,
-                duration_ms,
+            EventRecord {
+                event: Event::MigrationCompleted {
+                    chunk_id,
+                    from,
+                    to,
+                    duration_ms,
+                    ..
+                },
                 sequence_id,
+                ..
             } => {
                 assert_eq!(chunk_id, id);
                 assert_eq!(from, TierId::Ram);
@@ -418,7 +493,11 @@ mod tests {
             .await
             .unwrap();
         match rx.recv().await.unwrap() {
-            Event::BackendHealthChanged { tier, old, new, sequence_id } => {
+            EventRecord {
+                event: Event::BackendHealthChanged { tier, old, new, .. },
+                sequence_id,
+                ..
+            } => {
                 assert_eq!(tier, TierId::Disk);
                 assert_eq!(old, BackendHealth::Healthy);
                 assert_eq!(new, BackendHealth::Degraded);
@@ -436,11 +515,15 @@ mod tests {
             .await
             .unwrap();
         match rx.recv().await.unwrap() {
-            Event::InvariantViolation {
-                rule,
-                details,
-                severity,
+            EventRecord {
+                event: Event::InvariantViolation {
+                    rule,
+                    details,
+                    severity,
+                    ..
+                },
                 sequence_id,
+                ..
             } => {
                 assert_eq!(rule, "no_orphans");
                 assert_eq!(details, "orphaned transfer detected");
@@ -465,7 +548,60 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(matches!(rx.recv().await.unwrap(), Event::AllocationCreated { .. }));
-        assert!(matches!(rx.recv().await.unwrap(), Event::AllocationFreed { .. }));
+        let rec1 = rx.recv().await.unwrap();
+        let rec2 = rx.recv().await.unwrap();
+        assert!(matches!(rec1.event, Event::AllocationCreated { .. }));
+        assert!(matches!(rec2.event, Event::AllocationFreed { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_sequence_ids_monotonic() {
+        let (emitter, mut rx) = test_channel();
+        let id = ChunkId::from_data(b"test");
+
+        // Emit 10 events
+        for _ in 0..10 {
+            emitter
+                .allocation_created(id, TierId::Ram, 1024)
+                .await
+                .unwrap();
+        }
+
+        let mut prev_id = 0;
+        for _ in 0..10 {
+            let rec = rx.recv().await.unwrap();
+            assert!(
+                rec.sequence_id > prev_id,
+                "sequence_id {} should be > {}",
+                rec.sequence_id,
+                prev_id
+            );
+            prev_id = rec.sequence_id;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_timestamps_non_decreasing() {
+        let (emitter, mut rx) = test_channel();
+        let id = ChunkId::from_data(b"test");
+
+        for _ in 0..5 {
+            emitter
+                .allocation_created(id, TierId::Ram, 1024)
+                .await
+                .unwrap();
+        }
+
+        let mut prev_ts = 0;
+        for _ in 0..5 {
+            let rec = rx.recv().await.unwrap();
+            assert!(
+                rec.timestamp >= prev_ts,
+                "timestamp {} should be >= {}",
+                rec.timestamp,
+                prev_ts
+            );
+            prev_ts = rec.timestamp;
+        }
     }
 }

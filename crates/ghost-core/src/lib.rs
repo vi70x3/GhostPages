@@ -40,7 +40,7 @@ pub mod types;
 pub use emitter::EventEmitter;
 pub use error::{GhostError, GhostResult};
 pub use event_multiplexer::{EventHandler, EventMultiplexer};
-pub use events::{BackendHealth, Event, InvariantSeverity};
+pub use events::{BackendHealth, Event, EventRecord, InvariantSeverity};
 pub use io_abstraction::{IoCompletion, IoRequest, IoScheduler};
 pub use io_events::{IoEvent, IoOperation};
 pub use state::{ChunkState, PressureState, StateMachine};

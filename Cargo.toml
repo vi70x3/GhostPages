@@ -12,6 +12,7 @@ members = [
     "crates/ghost-policy",
     "crates/ghost-compress",
     "crates/ghost-metrics",
+    "crates/ghost-linux",
     "crates/ghost-replay",
     "crates/ghost-cli",
 ]

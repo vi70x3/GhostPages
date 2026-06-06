@@ -526,6 +526,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ghost-linux"
+version = "0.1.0"
+dependencies = [
+ "ghost-core",
+ "rand 0.8.6",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "ghost-metrics"
 version = "0.1.0"
 dependencies = [

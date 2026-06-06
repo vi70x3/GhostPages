@@ -311,6 +311,28 @@ pub enum Event {
         tier: TierId,
     },
 
+    // ── PSI (Pressure Stall Information) ──────────────────────────────────────
+
+    /// Memory pressure changed (from Linux PSI).
+    MemoryPressureChanged {
+        sequence_id: u64,
+        level: PressureState,
+        avg10: f64,
+        avg60: f64,
+        avg300: f64,
+        total: u64,
+    },
+
+    /// I/O pressure changed (from Linux PSI).
+    IoPressureChanged {
+        sequence_id: u64,
+        level: PressureState,
+        avg10: f64,
+        avg60: f64,
+        avg300: f64,
+        total: u64,
+    },
+
     // ── Failure ──────────────────────────────────────────────────────────────
 
     /// A backend's health status changed.
@@ -501,6 +523,8 @@ impl Event {
             Event::IoFlushIssued { sequence_id, .. } => *sequence_id,
             Event::IoFlushCompleted { sequence_id, .. } => *sequence_id,
             Event::IoBufferStateChange { sequence_id, .. } => *sequence_id,
+            Event::MemoryPressureChanged { sequence_id, .. } => *sequence_id,
+            Event::IoPressureChanged { sequence_id, .. } => *sequence_id,
         }
     }
 
@@ -545,6 +569,8 @@ impl Event {
             Event::IoFlushIssued { sequence_id: s, .. } => *s = sequence_id,
             Event::IoFlushCompleted { sequence_id: s, .. } => *s = sequence_id,
             Event::IoBufferStateChange { sequence_id: s, .. } => *s = sequence_id,
+            Event::MemoryPressureChanged { sequence_id: s, .. } => *s = sequence_id,
+            Event::IoPressureChanged { sequence_id: s, .. } => *s = sequence_id,
         }
         self
     }
@@ -592,6 +618,8 @@ impl Event {
             Event::IoFlushIssued { tier, .. } => Some(*tier),
             Event::IoFlushCompleted { tier, .. } => Some(*tier),
             Event::IoBufferStateChange { tier, .. } => Some(*tier),
+            Event::MemoryPressureChanged { .. } => None,
+            Event::IoPressureChanged { .. } => None,
             _ => None,
         }
     }
@@ -643,6 +671,8 @@ impl Event {
             | Event::IoFlushIssued { .. }
             | Event::IoFlushCompleted { .. }
             | Event::IoBufferStateChange { .. } => "io",
+            | Event::MemoryPressureChanged { .. } => "pressure",
+            | Event::IoPressureChanged { .. } => "pressure",
         }
     }
 
@@ -685,6 +715,8 @@ impl Event {
             Event::IoFlushIssued { .. } => "io_flush_issued",
             Event::IoFlushCompleted { .. } => "io_flush_completed",
             Event::IoBufferStateChange { .. } => "io_buffer_state_change",
+            Event::MemoryPressureChanged { .. } => "memory_pressure_changed",
+            Event::IoPressureChanged { .. } => "io_pressure_changed",
         }
     }
 }

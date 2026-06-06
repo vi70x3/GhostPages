@@ -458,6 +458,22 @@ impl EventHandler for TracingHandler {
                         "Migration rejected"
                     );
                 }
+                Event::MemoryPressureChanged { avg10, avg60, avg300, .. } => {
+                    tracing::info!(
+                        avg10,
+                        avg60,
+                        avg300,
+                        "Memory pressure changed"
+                    );
+                }
+                Event::IoPressureChanged { avg10, avg60, avg300, .. } => {
+                    tracing::info!(
+                        avg10,
+                        avg60,
+                        avg300,
+                        "IO pressure changed"
+                    );
+                }
             }
 
             Ok(())

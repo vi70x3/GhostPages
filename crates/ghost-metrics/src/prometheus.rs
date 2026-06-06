@@ -60,6 +60,16 @@ pub struct PrometheusMetrics {
     pub store_duration_seconds: Histogram,
     /// Retrieve operation latency.
     pub retrieve_duration_seconds: Histogram,
+
+    // PSI (Pressure Stall Information) gauges
+    /// Memory pressure 10-second average.
+    pub memory_pressure_avg10: IntGauge,
+    /// Memory pressure 60-second average.
+    pub memory_pressure_avg60: IntGauge,
+    /// Memory pressure 300-second average.
+    pub memory_pressure_avg300: IntGauge,
+    /// I/O pressure 10-second average.
+    pub io_pressure_avg10: IntGauge,
 }
 
 impl PrometheusMetrics {
@@ -152,6 +162,30 @@ impl PrometheusMetrics {
         )
         .map_err(prom_err)?;
 
+        let memory_pressure_avg10 = IntGauge::new(
+            "ghost_memory_pressure_avg10",
+            "Memory pressure 10-second average from PSI",
+        )
+        .map_err(prom_err)?;
+
+        let memory_pressure_avg60 = IntGauge::new(
+            "ghost_memory_pressure_avg60",
+            "Memory pressure 60-second average from PSI",
+        )
+        .map_err(prom_err)?;
+
+        let memory_pressure_avg300 = IntGauge::new(
+            "ghost_memory_pressure_avg300",
+            "Memory pressure 300-second average from PSI",
+        )
+        .map_err(prom_err)?;
+
+        let io_pressure_avg10 = IntGauge::new(
+            "ghost_io_pressure_avg10",
+            "IO pressure 10-second average from PSI",
+        )
+        .map_err(prom_err)?;
+
         // Register all metrics
         registry
             .register(Box::new(store_total.clone()))
@@ -198,6 +232,18 @@ impl PrometheusMetrics {
         registry
             .register(Box::new(retrieve_duration_seconds.clone()))
             .map_err(prom_err)?;
+        registry
+            .register(Box::new(memory_pressure_avg10.clone()))
+            .map_err(prom_err)?;
+        registry
+            .register(Box::new(memory_pressure_avg60.clone()))
+            .map_err(prom_err)?;
+        registry
+            .register(Box::new(memory_pressure_avg300.clone()))
+            .map_err(prom_err)?;
+        registry
+            .register(Box::new(io_pressure_avg10.clone()))
+            .map_err(prom_err)?;
 
         Ok(Self {
             registry,
@@ -216,6 +262,10 @@ impl PrometheusMetrics {
             transfer_queue_depth,
             store_duration_seconds,
             retrieve_duration_seconds,
+            memory_pressure_avg10,
+            memory_pressure_avg60,
+            memory_pressure_avg300,
+            io_pressure_avg10,
         })
     }
 }

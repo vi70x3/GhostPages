@@ -1,0 +1,19 @@
+[package]
+name = "ghost-linux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+
+[dependencies]
+ghost-core = { path = "../ghost-core" }
+tokio = { workspace = true, features = ["fs"] }
+tracing = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+tempfile = { workspace = true }

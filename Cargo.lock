@@ -451,6 +451,7 @@ dependencies = [
  "clap",
  "ghost-core",
  "ghost-ipc",
+ "ghost-linux",
  "ghost-replay",
  "hex",
  "serde_json",
@@ -529,8 +530,15 @@ dependencies = [
 name = "ghost-linux"
 version = "0.1.0"
 dependencies = [
+ "bincode",
+ "blake3",
  "ghost-core",
+ "ghost-daemon",
+ "parking_lot",
+ "prometheus",
  "rand 0.8.6",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",

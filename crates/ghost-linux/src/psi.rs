@@ -4,6 +4,7 @@
 //! `/proc/pressure/{memory,io,cpu}`. Supports both real PSI reads on Linux
 //! and deterministic simulation for testing and replay.
 
+use serde::{Serialize, Deserialize};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -18,7 +19,7 @@ use ghost_core::state::PressureState;
 use ghost_core::time::TimeProvider;
 
 /// PSI resource type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PsiResource {
     Memory,
     Io,
@@ -37,7 +38,7 @@ impl PsiResource {
 }
 
 /// A single PSI sample from the kernel.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PsiSample {
     /// Which resource this sample is for.
     pub resource: PsiResource,

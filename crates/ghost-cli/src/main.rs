@@ -177,8 +177,37 @@ enum Commands {
 
     /// Show replay status.
     ReplayStatus,
+
+    /// Linux observation commands.
+    Linux {
+        /// Linux subcommand to execute.
+        #[command(subcommand)]
+        action: LinuxAction,
+    },
 }
 
+
+/// Linux observation subcommands.
+#[derive(Debug, Subcommand)]
+enum LinuxAction {
+    /// Perform a full system scan.
+    Scan,
+
+    /// Record observations to file.
+    Record {
+        /// Path to the output file.
+        path: PathBuf,
+    },
+
+    /// Replay observations from file.
+    Replay {
+        /// Path to the input file.
+        path: PathBuf,
+    },
+
+    /// Show current tier inventory and pressure.
+    Status,
+}
 // ─── Main ──────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -867,6 +896,118 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+        Commands::Linux { action } => {
+            use ghost_linux::{LinuxRecorder, LinuxReplayer, SystemScanner};
+            use ghost_core::time::RealTimeProvider;
+            use std::sync::Arc;
+            use std::time::Duration;
+
+            let time_provider: Arc<dyn ghost_core::time::TimeProvider> =
+                Arc::new(RealTimeProvider);
+            let emitter = {
+                let (tx, _rx) = tokio::sync::mpsc::channel(256);
+                ghost_core::emitter::EventEmitter::new(tx)
+            };
+
+            match action {
+                LinuxAction::Scan => {
+                    let mut scanner = SystemScanner::new(
+                        time_provider,
+                        emitter,
+                        42,
+                    );
+                    let snapshot = scanner.scan().context("system scan failed")?;
+                    println!("=== System Scan ===");
+                    println!("Timestamp: {}", snapshot.timestamp);
+                    if let Some(ref psi) = snapshot.psi {
+                        println!("PSI samples: {}", psi.len());
+                        for p in psi {
+                            println!("  {:?}: avg10={:.2} avg60={:.2} avg300={:.2} total={}",
+                                p.resource, p.avg10, p.avg60, p.avg300, p.total);
+                        }
+                    }
+                    if let Some(ref mem) = snapshot.meminfo {
+                        println!("Memory: {} MB total, {} MB available",
+                            mem.total_kb / 1024, mem.available_kb / 1024);
+                    }
+                    if let Some(ref swap) = snapshot.swap {
+                        println!("Swap: {} MB total, {} MB used",
+                            swap.total_kb / 1024, swap.used_kb / 1024);
+                    }
+                    if let Some(ref zram) = snapshot.zram {
+                        println!("ZRAM: {} devices, ratio={:.2}",
+                            zram.devices.len(), zram.compression_ratio);
+                    }
+                    if let Some(ref tiers) = snapshot.tier_inventory {
+                        println!("Tiers: {}", tiers.len());
+                        for tier in tiers {
+                            println!("  {}: {} / {} bytes ({:.1}%)",
+                                tier.name, tier.used_bytes, tier.total_bytes,
+                                tier.utilization() * 100.0);
+                        }
+                    }
+                    println!("Recommendations:");
+                    for rec in &snapshot.recommendations {
+                        println!("  {}", rec);
+                    }
+                }
+
+                LinuxAction::Record { path } => {
+                    let mut scanner = SystemScanner::new(
+                        time_provider,
+                        emitter,
+                        42,
+                    );
+                    let mut recorder = LinuxRecorder::new(&path)
+                        .context("failed to create recorder")?;
+                    let _snapshot = scanner.scan_and_record(&mut recorder)
+                        .context("scan and record failed")?;
+                    recorder.close().context("failed to close recorder")?;
+                    println!("Recorded observations to: {}", path.display());
+                }
+
+                LinuxAction::Replay { path } => {
+                    let mut replayer = LinuxReplayer::new(&path)
+                        .context("failed to open replay file")?;
+                    replayer.load().context("failed to load replay file")?;
+                    println!("=== Replay: {} ===", path.display());
+                    println!("Events: {}", replayer.event_count());
+                    replayer.reset();
+                    while let Some(event) = replayer.next() {
+                        println!("  [{}] seq={} ts={}",
+                            event.event_name(),
+                            event.sequence_id,
+                            event.timestamp);
+                    }
+                }
+
+                LinuxAction::Status => {
+                    let mut scanner = SystemScanner::new(
+                        time_provider,
+                        emitter,
+                        42,
+                    );
+                    let snapshot = scanner.scan().context("status scan failed")?;
+                    println!("=== Linux System Status ===");
+                    println!("Timestamp: {}", snapshot.timestamp);
+                    if let Some(ref tiers) = snapshot.tier_inventory {
+                        println!("Tier Inventory ({} tiers):", tiers.len());
+                        for tier in tiers {
+                            let pressure = tier.pressure.memory_pressure;
+                            println!("  {}: used={}/{} bytes ({:.1}%) pressure={:.2}",
+                                tier.name, tier.used_bytes, tier.total_bytes,
+                                tier.utilization() * 100.0, pressure);
+                        }
+                    }
+                    if let Some(ref psi) = snapshot.psi {
+                        for p in psi {
+                            println!("PSI {:?}: avg10={:.2}%", p.resource, p.avg10);
+                        }
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }

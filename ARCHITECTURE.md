@@ -104,3 +104,33 @@ All physical cost calculations are deterministic functions of:
 - Seeded RNG in `SimBackend` (via `ChaCha8Rng`)
 
 Given the same inputs, `decide_migration()` always produces the same output — verified by replay equivalence tests.
+
+## State Ownership
+
+Only `ghost-daemon` may mutate runtime state. This is the highest-priority architectural contract, enforced continuously through both compile-time and runtime mechanisms.
+
+### Core Rule
+
+All state mutations go through `TransferOrchestrator`. No other crate, module, or subsystem may call `StateMachine::transition()` directly.
+
+### Worker → Orchestrator Channel
+
+Workers never touch the state machine. After completing a transfer, a worker sends a [`WorkerCompletion`] report through a dedicated channel. The orchestrator receives these reports and applies the appropriate state transition:
+
+- **Success**: `Migrating → Stored`
+- **Failure**: `Migrating → Failed`
+
+This was the only known state ownership violation (documented in `BOUNDARY_AUDIT.md` §1) and has been refactored.
+
+### Enforcement Mechanisms
+
+1. **Type system**: `WorkerPool` does not hold a `StateMachine` reference. It cannot call `transition()` because it doesn't have the type.
+2. **Channel architecture**: Workers report via `WorkerCompletion` channel; orchestrator applies changes.
+3. **Module boundary**: `StateMachine::transition()` is only called from `ghost-daemon/src/orchestrator.rs`.
+4. **Marker token**: `StateMutationToken` (`ghost-core/src/state_ownership.rs`) provides compile-time gating when the `enforce-state-ownership` feature is enabled.
+5. **Runtime audit**: `StateOwnershipLog` records every mutation with module, action, timestamp, and chunk ID for post-hoc verification.
+6. **Test verification**: `ghost-daemon/tests/state_ownership.rs` contains 8 tests enforcing the contract.
+
+### Reference
+
+See [`STATE_OWNERSHIP.md`](STATE_OWNERSHIP.md) for the full contract, violation table, and architecture diagram.

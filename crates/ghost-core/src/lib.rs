@@ -30,6 +30,7 @@ pub mod invariant_registry;
 pub mod io_abstraction;
 pub mod io_events;
 pub mod state;
+pub mod state_ownership;
 pub mod time;
 pub mod trace;
 pub mod transfer;

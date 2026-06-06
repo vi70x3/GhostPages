@@ -349,12 +349,11 @@ async fn test_worker_runtime_reports_via_channel() {
         backends,
         trace_log.clone(),
         metrics.clone(),
-        state_machine.clone(),
     );
 
     // WorkerPool.start() returns a channel sender — this is the channel-based API
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let (job_tx, _handles) = pool.start(shutdown_rx);
+    let (job_tx, _completion_rx, _handles) = pool.start(shutdown_rx);
 
     // Submit a job via channel (not direct mutation)
     let job = TransferJob::new(
@@ -381,8 +380,8 @@ async fn test_worker_runtime_reports_via_channel() {
 fn test_worker_pool_does_not_own_queue() {
     // Verify WorkerPool struct does not hold a reference to TransferQueue.
     // This is a compile-time invariant: WorkerPool's fields are:
-    // config, backends, trace_log, metrics, active_workers, state_machine, event_emitter
-    // No queue field exists.
+    // config, backends, trace_log, metrics, active_workers, event_emitter
+    // No queue field exists. No state_machine — workers report via channel.
 
     let config = ghost_daemon::config::WorkerPoolConfig {
         worker_count: 1,
@@ -396,7 +395,7 @@ fn test_worker_pool_does_not_own_queue() {
     let metrics = test_metrics();
     let state_machine = Arc::new(std::sync::Mutex::new(StateMachine::new()));
 
-    let _pool = WorkerPool::new(config, backends, trace_log, metrics, state_machine);
+    let _pool = WorkerPool::new(config, backends, trace_log, metrics);
 
     // If this compiles, WorkerPool doesn't have a queue field.
     // The type system enforces this invariant.

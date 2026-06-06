@@ -3,6 +3,12 @@
 //! Each worker receives transfer jobs and executes them through the
 //! full pipeline: compress → transfer → write → verify.
 //! Handles retries with exponential backoff and graceful cancellation.
+//!
+//! # State Ownership
+//!
+//! Workers never mutate runtime state directly. After completing a transfer,
+//! the worker sends a [`WorkerCompletion`] report through a channel. The
+//! orchestrator receives these reports and performs state transitions.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,9 +29,35 @@ use crate::config::WorkerPoolConfig;
 use crate::metrics::TransferMetrics;
 use crate::trace_log::TraceLog;
 
+/// A completion report sent by a worker to the orchestrator.
+///
+/// Workers never mutate state directly. Instead, they send this report
+/// through the completion channel, and the orchestrator applies the
+/// appropriate state transition.
+#[derive(Debug, Clone)]
+pub struct WorkerCompletion {
+    /// The chunk that was processed.
+    pub chunk_id: ghost_core::types::ChunkId,
+    /// The source tier.
+    pub from_tier: TierId,
+    /// The destination tier.
+    pub to_tier: TierId,
+    /// Whether the transfer succeeded.
+    pub success: bool,
+    /// Error message if the transfer failed.
+    pub error: Option<String>,
+    /// The worker ID that processed this job.
+    pub worker_id: usize,
+    /// Timestamp of completion.
+    pub timestamp: u64,
+}
+
 /// SUBSYSTEM: Worker Runtime
 ///
 /// A pool of worker tasks that process transfer jobs.
+///
+/// Workers report completions via a channel; the orchestrator is
+/// responsible for all state mutations.
 #[derive(Debug)]
 pub struct WorkerPool {
     config: WorkerPoolConfig,
@@ -33,7 +65,6 @@ pub struct WorkerPool {
     trace_log: Arc<TraceLog>,
     metrics: Arc<TransferMetrics>,
     active_workers: Arc<AtomicU64>,
-    state_machine: Arc<std::sync::Mutex<ghost_core::state::StateMachine>>,
     /// Optional event emitter for unified event taxonomy.
     event_emitter: Option<EventEmitter>,
 }
@@ -45,7 +76,6 @@ impl WorkerPool {
         backends: BTreeMap<TierId, Arc<dyn StorageBackend>>,
         trace_log: Arc<TraceLog>,
         metrics: Arc<TransferMetrics>,
-        state_machine: Arc<std::sync::Mutex<ghost_core::state::StateMachine>>,
     ) -> Self {
         Self {
             config,
@@ -53,7 +83,6 @@ impl WorkerPool {
             trace_log,
             metrics,
             active_workers: Arc::new(AtomicU64::new(0)),
-            state_machine,
             event_emitter: None,
         }
     }
@@ -65,12 +94,21 @@ impl WorkerPool {
 
     /// Start the worker pool, spawning worker tasks.
     ///
-    /// Returns a sender channel for submitting jobs and a JoinHandle vector.
+    /// Returns a sender channel for submitting jobs, a receiver channel for
+    /// completion reports, and a JoinHandle vector.
+    ///
+    /// The caller (orchestrator) must process completion reports from the
+    /// receiver channel to apply state transitions.
     pub fn start(
         &self,
         shutdown_rx: tokio::sync::watch::Receiver<bool>,
-    ) -> (mpsc::Sender<TransferJob>, Vec<tokio::task::JoinHandle<()>>) {
-        let (tx, rx) = mpsc::channel::<TransferJob>(self.config.worker_count * 2);
+    ) -> (
+        mpsc::Sender<TransferJob>,
+        mpsc::Receiver<WorkerCompletion>,
+        Vec<tokio::task::JoinHandle<()>>,
+    ) {
+        let (job_tx, rx) = mpsc::channel::<TransferJob>(self.config.worker_count * 2);
+        let (completion_tx, completion_rx) = mpsc::channel::<WorkerCompletion>(self.config.worker_count * 2);
         let mut handles = Vec::with_capacity(self.config.worker_count);
 
         // Share the receiver among all workers using an Arc<Mutex>
@@ -81,7 +119,6 @@ impl WorkerPool {
             let trace_log = self.trace_log.clone();
             let metrics = self.metrics.clone();
             let active_workers = self.active_workers.clone();
-            let state_machine = self.state_machine.clone();
             let max_retries = self.config.max_retries;
             let retry_base_delay_ms = self.config.retry_base_delay_ms;
             let max_retry_delay_ms = self.config.max_retry_delay_ms;
@@ -89,6 +126,7 @@ impl WorkerPool {
             let event_emitter = self.event_emitter.clone();
             let mut shutdown_rx = shutdown_rx.clone();
             let rx = rx.clone();
+            let completion_tx = completion_tx.clone();
 
             let handle = tokio::spawn(async move {
                 // Emit worker spawned event
@@ -114,7 +152,6 @@ impl WorkerPool {
                                 &mut job,
                                 &backends,
                                 &trace_log,
-                                state_machine.clone(),
                                 max_retries,
                                 retry_base_delay_ms,
                                 max_retry_delay_ms,
@@ -124,6 +161,7 @@ impl WorkerPool {
                             )
                             .await;
 
+                            let timestamp = current_timestamp();
                             match result {
                                 Ok(()) => {
                                     metrics.record_completion();
@@ -149,17 +187,19 @@ impl WorkerPool {
                                             });
                                         }
                                     }
-                                    // After successful cross-tier migration,
-                                    // transition chunk from Migrating to Stored
+                                    // Report completion to orchestrator via channel.
+                                    // The orchestrator will perform the state transition.
                                     if job.from_tier != job.to_tier {
-                                        let mut sm = state_machine.lock().unwrap();
-                                        let _ = sm.transition(&job.chunk_id, ChunkState::Stored);
-                                        trace_log.record(TraceEvent::ChunkStateChanged {
+                                        let completion = WorkerCompletion {
                                             chunk_id: job.chunk_id,
-                                            from: ChunkState::Migrating,
-                                            to: ChunkState::Stored,
-                                            timestamp: current_timestamp(),
-                                        });
+                                            from_tier: job.from_tier,
+                                            to_tier: job.to_tier,
+                                            success: true,
+                                            error: None,
+                                            worker_id,
+                                            timestamp,
+                                        };
+                                        let _ = completion_tx.send(completion).await;
                                     }
                                 }
                                 Err(GhostError::Cancelled) => {
@@ -168,7 +208,7 @@ impl WorkerPool {
                                         chunk_id: job.chunk_id,
                                         from: job.from_tier,
                                         to: job.to_tier,
-                                        timestamp: current_timestamp(),
+                                        timestamp,
                                     });
                                 }
                                 Err(e) => {
@@ -189,8 +229,21 @@ impl WorkerPool {
                                         to: job.to_tier,
                                         error: e.to_string(),
                                         attempt: job.attempts,
-                                        timestamp: current_timestamp(),
+                                        timestamp,
                                     });
+                                    // Report failure to orchestrator via channel
+                                    if job.from_tier != job.to_tier {
+                                        let completion = WorkerCompletion {
+                                            chunk_id: job.chunk_id,
+                                            from_tier: job.from_tier,
+                                            to_tier: job.to_tier,
+                                            success: false,
+                                            error: Some(e.to_string()),
+                                            worker_id,
+                                            timestamp,
+                                        };
+                                        let _ = completion_tx.send(completion).await;
+                                    }
                                 }
                             }
 
@@ -224,7 +277,7 @@ impl WorkerPool {
             handles.push(handle);
         }
 
-        (tx, handles)
+        (job_tx, completion_rx, handles)
     }
 
     /// Execute a single transfer job with retry logic.
@@ -233,7 +286,6 @@ impl WorkerPool {
         job: &mut TransferJob,
         backends: &BTreeMap<TierId, Arc<dyn StorageBackend>>,
         trace_log: &TraceLog,
-        _state_machine: Arc<std::sync::Mutex<ghost_core::state::StateMachine>>,
         max_retries: u32,
         retry_base_delay_ms: u64,
         max_retry_delay_ms: u64,
@@ -466,11 +518,10 @@ mod tests {
             backends,
             trace_log.clone(),
             metrics.clone(),
-            Arc::new(std::sync::Mutex::new(ghost_core::state::StateMachine::new())),
         );
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let (job_tx, handles) = pool.start(shutdown_rx);
+        let (job_tx, _completion_rx, handles) = pool.start(shutdown_rx);
 
         let job = TransferJob::new(
             ChunkId::from_data(b"worker_test"),
@@ -522,11 +573,10 @@ mod tests {
             backends,
             trace_log,
             metrics,
-            Arc::new(std::sync::Mutex::new(ghost_core::state::StateMachine::new())),
         );
 
         let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let (_job_tx, _handles) = pool.start(shutdown_rx);
+        let (_job_tx, _completion_rx, _handles) = pool.start(shutdown_rx);
 
         // Initially no active workers
         assert_eq!(pool.active_worker_count(), 0);
@@ -544,8 +594,44 @@ mod tests {
             backends,
             trace_log,
             metrics,
-            Arc::new(std::sync::Mutex::new(ghost_core::state::StateMachine::new())),
         );
         assert_eq!(pool.active_worker_count(), 0);
+    }
+
+    #[test]
+    fn test_worker_completion_fields() {
+        let chunk_id = ChunkId::from_data(b"completion_test");
+        let completion = WorkerCompletion {
+            chunk_id,
+            from_tier: TierId::Ram,
+            to_tier: TierId::Simulation,
+            success: true,
+            error: None,
+            worker_id: 0,
+            timestamp: 12345,
+        };
+        assert_eq!(completion.chunk_id, chunk_id);
+        assert_eq!(completion.from_tier, TierId::Ram);
+        assert_eq!(completion.to_tier, TierId::Simulation);
+        assert!(completion.success);
+        assert!(completion.error.is_none());
+        assert_eq!(completion.worker_id, 0);
+        assert_eq!(completion.timestamp, 12345);
+    }
+
+    #[test]
+    fn test_worker_completion_failure() {
+        let completion = WorkerCompletion {
+            chunk_id: ChunkId::from_data(b"fail_test"),
+            from_tier: TierId::Ram,
+            to_tier: TierId::Simulation,
+            success: false,
+            error: Some("backend error".to_string()),
+            worker_id: 1,
+            timestamp: 99999,
+        };
+        assert!(!completion.success);
+        assert_eq!(completion.error.as_deref(), Some("backend error"));
+        assert_eq!(completion.worker_id, 1);
     }
 }

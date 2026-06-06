@@ -30,6 +30,7 @@ prometheus.workspace = true
 [features]
 deterministic = []
 runtime-invariants = ["ghost-core/runtime-invariants"]
+enforce-state-ownership = ["ghost-core/enforce-state-ownership"]
 
 [dev-dependencies]
 tempfile.workspace = true

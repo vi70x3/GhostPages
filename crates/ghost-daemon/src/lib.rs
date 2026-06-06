@@ -76,3 +76,4 @@ pub use orchestrator::TransferOrchestrator;
 pub use pipeline::Pipeline;
 pub use retry::RetryConfig as RetryConfigType;
 pub use transfer_worker::{TransferCompletion, TransferTask, TransferWorkerPool};
+pub use worker::WorkerCompletion;

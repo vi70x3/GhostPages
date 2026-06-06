@@ -31,7 +31,7 @@ use crate::pressure::{PressureMonitor, PressureMonitorConfig};
 use crate::queue::TransferQueue;
 use crate::scheduler::TransferScheduler;
 use crate::trace_log::TraceLog;
-use crate::worker::WorkerPool;
+use crate::worker::{WorkerCompletion, WorkerPool};
 
 /// SUBSYSTEM: Runtime State Owner
 ///
@@ -189,20 +189,67 @@ impl TransferOrchestrator {
         });
 
         // Create and start the worker pool
+        // Create and start the worker pool (no state_machine — workers report via channel)
         let mut worker_pool = WorkerPool::new(
             self.worker_config.clone(),
             self.backends.clone(),
             self.trace_log.clone(),
             self.metrics.clone(),
-            self.state_machine.clone(),
         );
+
+
+
+
+
+
+
 
         // Pass event emitter to worker pool if configured
         if let Some(ref emitter) = self.event_emitter {
             worker_pool.set_event_emitter(emitter.clone());
         }
 
-        let (job_tx, worker_handles) = worker_pool.start(shutdown_rx.clone());
+        let (job_tx, mut completion_rx, worker_handles) = worker_pool.start(shutdown_rx.clone());
+
+        // Spawn the completion handler task — orchestrator processes worker completion
+        // reports and applies state transitions (sole mutator of runtime state).
+        let state_machine = self.state_machine.clone();
+        let trace_log_completion = self.trace_log.clone();
+        let mut completion_shutdown_rx = shutdown_rx.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Some(completion) = completion_rx.recv() => {
+                        if completion.success {
+                            // Transition chunk from Migrating to Stored
+                            let mut sm = state_machine.lock().unwrap();
+                            let _ = sm.transition(&completion.chunk_id, ChunkState::Stored);
+                            trace_log_completion.record(TraceEvent::ChunkStateChanged {
+                                chunk_id: completion.chunk_id,
+                                from: ChunkState::Migrating,
+                                to: ChunkState::Stored,
+                                timestamp: completion.timestamp,
+                            });
+                        } else {
+                            // Transition chunk from Migrating to Failed on error
+                            let mut sm = state_machine.lock().unwrap();
+                            let _ = sm.transition(&completion.chunk_id, ChunkState::Failed);
+                            trace_log_completion.record(TraceEvent::ChunkStateChanged {
+                                chunk_id: completion.chunk_id,
+                                from: ChunkState::Migrating,
+                                to: ChunkState::Failed,
+                                timestamp: completion.timestamp,
+                            });
+                        }
+                    }
+                    _ = completion_shutdown_rx.changed() => {
+                        if *completion_shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
 
         // Get pressure receiver from the pressure channel
         let pressure_rx = self

@@ -15,6 +15,7 @@ track-allocations = []
 
 [dependencies]
 ghost-core = { path = "../ghost-core" }
+ghost-compress = { path = "../ghost-compress" }
 blake3.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
@@ -22,6 +23,7 @@ tokio.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
 bytes.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

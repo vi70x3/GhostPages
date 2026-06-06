@@ -357,6 +357,33 @@ pub enum Event {
         operation: String,
         reason: String,
     },
+    // ── Hotness ────────────────────────────────────────────────────────────────
+
+    /// Hotness summary was updated (counts of each temperature).
+    HotnessSummaryUpdated {
+        sequence_id: u64,
+        hot: usize,
+        warm: usize,
+        cold: usize,
+        frozen: usize,
+    },
+
+    /// A region's temperature changed.
+    RegionTemperatureChanged {
+        sequence_id: u64,
+        region: String,
+        old_temp: String,
+        new_temp: String,
+    },
+
+    /// Hotness confidence was updated for a region.
+    HotnessConfidenceUpdated {
+        sequence_id: u64,
+        region: String,
+        confidence: f32,
+        level: String,
+    },
+
 
     // ── Invariant Violation ──────────────────────────────────────────────────
 
@@ -626,6 +653,9 @@ impl Event {
             Event::TierUtilizationChanged { sequence_id, .. } => *sequence_id,
             Event::HotnessSampled { sequence_id, .. } => *sequence_id,
             Event::HotnessChanged { sequence_id, .. } => *sequence_id,
+            Event::HotnessSummaryUpdated { sequence_id, .. } => *sequence_id,
+            Event::RegionTemperatureChanged { sequence_id, .. } => *sequence_id,
+            Event::HotnessConfidenceUpdated { sequence_id, .. } => *sequence_id,
             Event::PolicyRecommendationGenerated { sequence_id, .. } => *sequence_id,
         }
     }
@@ -682,6 +712,9 @@ impl Event {
             Event::TierUtilizationChanged { sequence_id: s, .. } => *s = sequence_id,
             Event::HotnessSampled { sequence_id: s, .. } => *s = sequence_id,
             Event::HotnessChanged { sequence_id: s, .. } => *s = sequence_id,
+            Event::HotnessSummaryUpdated { sequence_id: s, .. } => *s = sequence_id,
+            Event::RegionTemperatureChanged { sequence_id: s, .. } => *s = sequence_id,
+            Event::HotnessConfidenceUpdated { sequence_id: s, .. } => *s = sequence_id,
             Event::PolicyRecommendationGenerated { sequence_id: s, .. } => *s = sequence_id,
         }
         self
@@ -796,6 +829,9 @@ impl Event {
             | Event::TierUtilizationChanged { .. } => "tier_inventory",
             | Event::PolicyRecommendationGenerated { .. } => "policy",
             | Event::HotnessSampled { .. } | Event::HotnessChanged { .. } => "hotness",
+            | Event::HotnessSummaryUpdated { .. }
+            | Event::RegionTemperatureChanged { .. }
+            | Event::HotnessConfidenceUpdated { .. } => "hotness",
         }
     }
 
@@ -850,6 +886,9 @@ impl Event {
             Event::PolicyRecommendationGenerated { .. } => "policy_recommendation_generated",
             Event::HotnessSampled { .. } => "hotness_sampled",
             Event::HotnessChanged { .. } => "hotness_changed",
+            Event::HotnessSummaryUpdated { .. } => "hotness_summary_updated",
+            Event::RegionTemperatureChanged { .. } => "region_temperature_changed",
+            Event::HotnessConfidenceUpdated { .. } => "hotness_confidence_updated",
         }
     }
 }

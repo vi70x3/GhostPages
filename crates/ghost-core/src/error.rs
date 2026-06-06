@@ -74,6 +74,10 @@ pub enum GhostError {
     #[error("invalid state transition from {from:?} to {to:?}")]
     InvalidStateTransition { from: String, to: String },
 
+    /// A hotness provider is not available on this system.
+    #[error("provider unavailable: {0}")]
+    ProviderUnavailable(String),
+
     /// Generic internal error.
     #[error("internal error: {0}")]
     Internal(String),

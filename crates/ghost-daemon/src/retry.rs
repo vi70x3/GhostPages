@@ -132,6 +132,7 @@ fn error_type_tag(error: &GhostError) -> String {
         GhostError::ReplayError(_) => "replay_error".to_string(),
         GhostError::InvalidConfig(_) => "invalid_config".to_string(),
         GhostError::InvalidStateTransition { .. } => "invalid_state_transition".to_string(),
+        GhostError::ProviderUnavailable(_) => "provider_unavailable".to_string(),
         GhostError::Internal(_) => "internal".to_string(),
     }
 }

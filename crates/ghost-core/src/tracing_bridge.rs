@@ -474,6 +474,31 @@ impl EventHandler for TracingHandler {
                         "IO pressure changed"
                     );
                 }
+                Event::HotnessSummaryUpdated { hot, warm, cold, frozen, .. } => {
+                    tracing::info!(
+                        hot,
+                        warm,
+                        cold,
+                        frozen,
+                        "Hotness summary updated"
+                    );
+                }
+                Event::RegionTemperatureChanged { region, old_temp, new_temp, .. } => {
+                    tracing::info!(
+                        region,
+                        old_temp,
+                        new_temp,
+                        "Region temperature changed"
+                    );
+                }
+                Event::HotnessConfidenceUpdated { region, confidence, level, .. } => {
+                    tracing::info!(
+                        region,
+                        confidence,
+                        level,
+                        "Hotness confidence updated"
+                    );
+                }
                 Event::MemoryStatsChanged {
                     total_kb,
                     available_kb,

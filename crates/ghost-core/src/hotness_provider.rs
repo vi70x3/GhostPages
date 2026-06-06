@@ -1,14 +1,13 @@
-//! Hotness provider trait for DAMON integration.
+//! Hotness provider abstraction for memory temperature classification.
 //!
-//! This module defines the [`HotnessProvider`] trait — an abstraction over
-//! hotness data sources. Implementations live in other crates (e.g.,
-//! `ghost-linux` provides `MockHotnessProvider` and a future
-//! `DamonHotnessProvider`).
+//! This module provides the core types and trait for sampling memory hotness
+//! data from various sources (DAMON, mock providers, etc.).
 //!
 //! The trait is intentionally minimal so that a future DAMON-based provider
 //! can plug in without changes to consumers.
 
 use crate::error::GhostError;
+use crate::types::TierId;
 
 // ─── Data Types ─────────────────────────────────────────────────────────────────
 
@@ -54,7 +53,7 @@ impl AddressRange {
 }
 
 /// Temperature classification for a memory region.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Temperature {
     /// Hot: very frequently accessed.
     Hot,
@@ -82,6 +81,47 @@ impl Temperature {
             _ => Temperature::Frozen,
         }
     }
+
+    /// Convert temperature to recommended tier placement.
+    ///
+    /// - Hot → RAM (fastest access)
+    /// - Warm → RAM or GPU VRAM (high bandwidth)
+    /// - Cold → ZRAM or Disk (compressed or paged)
+    /// - Frozen → Disk (cold storage)
+    pub fn to_tier(&self) -> TierId {
+        match self {
+            Temperature::Hot => TierId::Ram,
+            Temperature::Warm => TierId::Ram, // Could also be GpuVram in some configs
+            Temperature::Cold => TierId::Disk,
+            Temperature::Frozen => TierId::Disk,
+        }
+    }
+
+    /// Get numeric value for comparison (higher = hotter).
+    ///
+    /// Returns: Hot=3, Warm=2, Cold=1, Frozen=0
+    pub fn value(&self) -> u8 {
+        match self {
+            Temperature::Hot => 3,
+            Temperature::Warm => 2,
+            Temperature::Cold => 1,
+            Temperature::Frozen => 0,
+        }
+    }
+
+    /// Check if temperature is "active" (hot or warm).
+    ///
+    /// Active regions should be kept in fast tiers.
+    pub fn is_active(&self) -> bool {
+        matches!(self, Temperature::Hot | Temperature::Warm)
+    }
+
+    /// Check if temperature is "inactive" (cold or frozen).
+    ///
+    /// Inactive regions can be safely moved to slower tiers.
+    pub fn is_inactive(&self) -> bool {
+        matches!(self, Temperature::Cold | Temperature::Frozen)
+    }
 }
 
 impl std::fmt::Display for Temperature {
@@ -106,17 +146,10 @@ impl std::fmt::Display for Temperature {
 pub trait HotnessProvider: Send + Sync {
     /// Sample current hotness data.
     ///
-    /// Returns a [`HotnessSnapshot`] with the current state of memory hotness,
-    /// or a [`GhostError`] if sampling fails.
+    /// Returns a snapshot of all monitored memory regions with their
+    /// current access counts and temperature classifications.
     fn sample(&self) -> Result<HotnessSnapshot, GhostError>;
 
-    /// Get the provider name (for logging/debugging).
-    fn provider_name(&self) -> &str;
-
-    /// Check if the provider is available on this system.
-    ///
-    /// Returns `true` if the provider can produce data, `false` otherwise.
-    /// For example, a DAMON-based provider would return `false` on non-Linux
-    /// systems or kernels without DAMON support.
-    fn is_available(&self) -> bool;
+    /// Get the provider's name for logging/debugging.
+    fn name(&self) -> &'static str;
 }

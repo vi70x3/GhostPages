@@ -6,6 +6,7 @@
 //! Pressure Stall Information (PSI) for memory, I/O, and CPU pressure monitoring,
 //! memory statistics from `/proc/meminfo`, and VM statistics from `/proc/vmstat`.
 
+pub mod damon;
 pub mod meminfo;
 pub mod policy;
 pub mod policy_rules;
@@ -19,6 +20,7 @@ pub mod vmstat;
 pub mod zram;
 pub mod hotness_provider;
 
+pub use damon::{DamonConfig, DamonHotnessProvider, DamonState, SimulatedDamonProvider};
 pub use meminfo::{MeminfoReader, MeminfoSnapshot, SimulatedMeminfoReader};
 pub use policy::{Recommendation, PolicyRuntime};
 pub use policy_rules::{PolicyRules, SystemState};

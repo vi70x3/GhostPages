@@ -18,6 +18,10 @@
 //! - [`TracingHandler`]: Event → structured tracing spans
 //! - [`TransferDevice`]: Backend-neutral transfer device abstraction
 //! - [`DmaPipeline`]: DMA-oriented transfer pipeline
+//! - [`Temperature`]: Memory temperature classification (Hot/Warm/Cold/Frozen)
+//! - [`HotnessSummary`]: Aggregated hotness statistics
+//! - [`HotnessConfidence`]: Confidence scoring for temperature classifications
+//! - [`HotnessHistory`]: Trend analysis for temperature and access patterns
 
 pub mod dma_pipeline;
 pub mod emitter;
@@ -26,7 +30,10 @@ pub mod event_multiplexer;
 pub mod events;
 pub mod hardware;
 pub mod hotness;
+pub mod hotness_confidence;
+pub mod hotness_history;
 pub mod hotness_provider;
+pub mod hotness_summary;
 pub mod invariant_registry;
 pub mod io_abstraction;
 pub mod io_events;
@@ -43,11 +50,14 @@ pub use emitter::EventEmitter;
 pub use error::{GhostError, GhostResult};
 pub use event_multiplexer::{EventHandler, EventMultiplexer};
 pub use events::{BackendHealth, Event, EventRecord, InvariantSeverity};
+pub use hotness_confidence::{ConfidenceFactor, ConfidenceLevel, HotnessConfidence};
+pub use hotness_history::{AccessTrend, HotnessHistory, TemperatureTrend};
+pub use hotness_provider::{AddressRange, HotnessProvider, HotnessSample, HotnessSnapshot, Temperature};
+pub use hotness_summary::HotnessSummary;
 pub use io_abstraction::{IoCompletion, IoRequest, IoScheduler};
 pub use io_events::{IoEvent, IoOperation};
 pub use state::{ChunkState, PressureState, StateMachine};
 pub use time::{DeterministicClock, DeterministicTimeProvider, RealTimeProvider, TimeProvider};
-pub use hotness_provider::{AddressRange, HotnessProvider, HotnessSample, HotnessSnapshot, Temperature};
 pub use trace::{EvictionReason, TraceEvent};
 pub use transfer::{TransferJob, TransferPriority, TransferState};
 pub use types::{ChunkId, ChunkMeta, CompressionAlgorithm, TierId};

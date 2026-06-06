@@ -1,4 +1,9 @@
 //! Configuration for the simulation backend.
+//!
+//! This module defines the configuration types used by `SimBackend` for
+//! latency simulation, bandwidth throttling, and failure injection.
+//! It is shared between the pure simulation backend and the disk backend's
+//! simulation layer.
 
 use std::time::Duration;
 

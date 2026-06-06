@@ -24,6 +24,8 @@ tracing.workspace = true
 parking_lot.workspace = true
 bytes.workspace = true
 hex.workspace = true
+rand.workspace = true
+rand_chacha = "0.3"
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1,4 +1,4 @@
-//! Bridge from unified [`Event`]s to Prometheus metrics.
+//! Bridge from unified [`EventRecord`]s to Prometheus metrics.
 //!
 //! [`MetricsBridge`] implements [`EventHandler`] and updates Prometheus
 //! counters/gauges when events are received. This provides real-time
@@ -24,7 +24,7 @@ use std::sync::Arc;
 use prometheus::{IntCounter, IntCounterVec, Opts, Registry};
 
 use ghost_core::event_multiplexer::EventHandler;
-use ghost_core::events::Event;
+use ghost_core::events::{Event, EventRecord};
 
 /// Prometheus metrics for the event bridge.
 #[derive(Debug, Clone)]
@@ -106,12 +106,12 @@ impl MetricsBridge {
 impl EventHandler for MetricsBridge {
     fn handle(
         &self,
-        event: &Event,
+        event_record: &EventRecord,
     ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + '_>>
     {
         let metrics = Arc::clone(&self.metrics);
-        let category = event.category();
-        let event = event.clone();
+        let category = event_record.category();
+        let event = event_record.event().clone();
 
         Box::pin(async move {
             // Increment total counter
@@ -150,6 +150,14 @@ mod tests {
         EventBridgeMetrics::register(&registry).expect("register metrics")
     }
 
+    fn make_event_record(event: Event) -> EventRecord {
+        EventRecord {
+            sequence_id: 0,
+            timestamp: 0,
+            event,
+        }
+    }
+
     #[tokio::test]
     async fn test_metrics_bridge_increments_total() {
         let metrics = test_metrics();
@@ -162,7 +170,7 @@ mod tests {
             sequence_id: 0,
         };
 
-        bridge.handle(&event).await.unwrap();
+        bridge.handle(&make_event_record(event)).await.unwrap();
         // The counter was incremented — we can't easily read the value
         // without exposing it, but the call succeeded without error.
     }
@@ -179,7 +187,7 @@ mod tests {
             sequence_id: 0,
         };
 
-        bridge.handle(&event).await.unwrap();
+        bridge.handle(&make_event_record(event)).await.unwrap();
     }
 
     #[tokio::test]
@@ -225,7 +233,7 @@ mod tests {
         ];
 
         for event in &events {
-            bridge.handle(event).await.unwrap();
+            bridge.handle(&make_event_record(event.clone())).await.unwrap();
         }
     }
 }

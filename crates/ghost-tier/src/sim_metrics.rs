@@ -1,4 +1,7 @@
 //! Metrics for the simulation backend.
+//!
+//! This module defines the metrics tracked by `SimBackend`. It is shared
+//! between the pure simulation backend and the disk backend's simulation layer.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;

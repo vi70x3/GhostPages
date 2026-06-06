@@ -143,6 +143,8 @@ impl TransferWorker {
     }
 }
 
+/// SUBSYSTEM: Worker Runtime
+///
 /// A pool of dedicated transfer workers.
 ///
 /// The worker pool provides:

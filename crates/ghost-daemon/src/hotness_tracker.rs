@@ -15,6 +15,8 @@ use parking_lot::RwLock;
 
 use crate::trace_log::TraceLog;
 
+/// SUBSYSTEM: Runtime State Owner
+///
 /// Hotness tracker that maintains access pattern analysis for all chunks.
 pub struct HotnessTracker {
     hotness_map: Arc<RwLock<BTreeMap<ChunkId, ChunkHotness>>>,

@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use ghost_core::state::PressureState;
 
+/// SUBSYSTEM: Event Router
+///
 /// Comprehensive diagnostic snapshot of the daemon's health.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiagnosticSnapshot {

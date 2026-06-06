@@ -7,6 +7,8 @@ use std::time::Duration;
 
 use ghost_core::error::GhostError;
 
+/// SUBSYSTEM: Migration Engine
+///
 /// Configuration for retry behavior with bounded exponential backoff.
 #[derive(Debug, Clone)]
 pub struct RetryConfig {

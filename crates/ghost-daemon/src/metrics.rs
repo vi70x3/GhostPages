@@ -4,6 +4,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// SUBSYSTEM: Event Router
+///
 /// Metrics for the transfer pipeline.
 ///
 /// All counters are atomic and can be read/written from multiple threads.

@@ -23,6 +23,8 @@ use crate::config::WorkerPoolConfig;
 use crate::metrics::TransferMetrics;
 use crate::trace_log::TraceLog;
 
+/// SUBSYSTEM: Worker Runtime
+///
 /// A pool of worker tasks that process transfer jobs.
 #[derive(Debug)]
 pub struct WorkerPool {

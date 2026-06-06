@@ -33,6 +33,8 @@ use crate::scheduler::TransferScheduler;
 use crate::trace_log::TraceLog;
 use crate::worker::WorkerPool;
 
+/// SUBSYSTEM: Runtime State Owner
+///
 /// The top-level orchestrator for the transfer engine.
 ///
 /// Provides a unified API for storing, retrieving, migrating, and evicting

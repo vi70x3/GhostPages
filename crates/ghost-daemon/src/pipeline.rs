@@ -3,6 +3,8 @@
 //! Skeleton implementation for Phase 0. Full pipeline functionality
 //! will be implemented in Phase 1.
 
+/// SUBSYSTEM: Worker Runtime
+///
 /// Async transfer pipeline.
 #[derive(Debug)]
 pub struct Pipeline;

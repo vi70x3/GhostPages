@@ -6,6 +6,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// SUBSYSTEM: Event Router
+///
 /// I/O metrics for tracking disk performance and congestion.
 ///
 /// All counters are atomic and can be read/written from multiple threads.

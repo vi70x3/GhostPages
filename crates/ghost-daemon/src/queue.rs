@@ -15,6 +15,8 @@ use tokio::sync::Notify;
 
 use crate::trace_log::TraceLog;
 
+/// SUBSYSTEM: Runtime State Owner
+///
 /// A bounded, async transfer queue.
 ///
 /// Supports priority insertion for high-priority jobs and provides

@@ -25,6 +25,8 @@ use crate::metrics::TransferMetrics;
 use crate::queue::TransferQueue;
 use crate::trace_log::TraceLog;
 
+/// SUBSYSTEM: Migration Engine
+///
 /// The transfer scheduler dequeues jobs and dispatches them to workers.
 pub struct TransferScheduler {
     queue: Arc<TransferQueue>,

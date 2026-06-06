@@ -214,6 +214,8 @@ impl Default for PressureMonitorConfig {
     }
 }
 
+/// SUBSYSTEM: Runtime State Owner
+///
 /// Background pressure monitor that samples all backends periodically.
 pub struct PressureMonitor {
     config: PressureMonitorConfig,

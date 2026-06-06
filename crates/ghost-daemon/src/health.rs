@@ -69,6 +69,8 @@ impl Default for HealthConfig {
     }
 }
 
+/// SUBSYSTEM: Runtime State Owner
+///
 /// Tracks health status for all registered storage backends.
 #[derive(Debug)]
 pub struct HealthTracker {

@@ -137,6 +137,8 @@ impl EvictionCooldown {
     }
 }
 
+/// SUBSYSTEM: Migration Engine
+///
 /// Migration engine that evaluates and executes pressure-driven chunk migrations.
 pub struct MigrationEngine {
     config: MigrationConfig,

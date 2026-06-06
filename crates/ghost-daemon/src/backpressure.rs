@@ -91,6 +91,8 @@ pub struct BackpressureStats {
     pub disk_congestion_escalations: u64,
 }
 
+/// SUBSYSTEM: Runtime State Owner
+///
 /// Backpressure controller that monitors system pressure and adjusts transfer
 /// concurrency to prevent cascading failures under overload.
 ///

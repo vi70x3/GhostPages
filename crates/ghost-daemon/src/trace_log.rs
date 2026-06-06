@@ -9,6 +9,8 @@ use ghost_core::trace::TraceEvent;
 
 use parking_lot::Mutex;
 
+/// SUBSYSTEM: Event Router
+///
 /// Append-only event log.
 ///
 /// Records every event in the transfer pipeline with timestamps.

@@ -193,6 +193,34 @@ pub enum Event {
         decision: String,
     },
 
+    /// A migration was approved and will proceed.
+    MigrationDecided {
+        sequence_id: u64,
+        chunk_id: ChunkId,
+        from: TierId,
+        to: TierId,
+        cost_score: f64,
+    },
+
+    /// A migration was deferred due to I/O pressure or queue depth.
+    MigrationDeferred {
+        sequence_id: u64,
+        chunk_id: ChunkId,
+        from: TierId,
+        to: TierId,
+        reason: String,
+    },
+
+    /// A migration was rejected due to physical cost exceeding threshold.
+    MigrationRejected {
+        sequence_id: u64,
+        chunk_id: ChunkId,
+        from: TierId,
+        to: TierId,
+        cost_score: f64,
+        threshold: f64,
+    },
+
     // ── Migration ────────────────────────────────────────────────────────────
 
     /// A chunk migration between tiers was started.
@@ -388,6 +416,9 @@ impl Event {
             Event::QueueEnqueue { sequence_id, .. } => *sequence_id,
             Event::QueueDequeue { sequence_id, .. } => *sequence_id,
             Event::MigrationDecision { sequence_id, .. } => *sequence_id,
+            Event::MigrationDecided { sequence_id, .. } => *sequence_id,
+            Event::MigrationDeferred { sequence_id, .. } => *sequence_id,
+            Event::MigrationRejected { sequence_id, .. } => *sequence_id,
             Event::MigrationStarted { sequence_id, .. } => *sequence_id,
             Event::MigrationCompleted { sequence_id, .. } => *sequence_id,
             Event::MigrationFailed { sequence_id, .. } => *sequence_id,
@@ -429,6 +460,9 @@ impl Event {
             Event::QueueEnqueue { sequence_id: s, .. } => *s = sequence_id,
             Event::QueueDequeue { sequence_id: s, .. } => *s = sequence_id,
             Event::MigrationDecision { sequence_id: s, .. } => *s = sequence_id,
+            Event::MigrationDecided { sequence_id: s, .. } => *s = sequence_id,
+            Event::MigrationDeferred { sequence_id: s, .. } => *s = sequence_id,
+            Event::MigrationRejected { sequence_id: s, .. } => *s = sequence_id,
             Event::MigrationStarted { sequence_id: s, .. } => *s = sequence_id,
             Event::MigrationCompleted { sequence_id: s, .. } => *s = sequence_id,
             Event::MigrationFailed { sequence_id: s, .. } => *s = sequence_id,
@@ -460,6 +494,9 @@ impl Event {
             Event::AllocationCreated { chunk_id, .. } => Some(*chunk_id),
             Event::AllocationFreed { chunk_id, .. } => Some(*chunk_id),
             Event::AllocationFailed { chunk_id, .. } => Some(*chunk_id),
+            Event::MigrationDecided { chunk_id, .. } => Some(*chunk_id),
+            Event::MigrationDeferred { chunk_id, .. } => Some(*chunk_id),
+            Event::MigrationRejected { chunk_id, .. } => Some(*chunk_id),
             Event::MigrationStarted { chunk_id, .. } => Some(*chunk_id),
             Event::MigrationCompleted { chunk_id, .. } => Some(*chunk_id),
             Event::MigrationFailed { chunk_id, .. } => Some(*chunk_id),
@@ -477,6 +514,9 @@ impl Event {
         match self {
             Event::AllocationCreated { tier, .. } => Some(*tier),
             Event::AllocationFreed { tier, .. } => Some(*tier),
+            Event::MigrationDecided { from, .. } => Some(*from),
+            Event::MigrationDeferred { from, .. } => Some(*from),
+            Event::MigrationRejected { from, .. } => Some(*from),
             Event::MigrationStarted { from, .. } => Some(*from),
             Event::MigrationCompleted { from, .. } => Some(*from),
             Event::MigrationFailed { from, .. } => Some(*from),
@@ -513,6 +553,9 @@ impl Event {
             | Event::QueueDequeue { .. } => "scheduler",
 
             Event::MigrationDecision { .. }
+            | Event::MigrationDecided { .. }
+            | Event::MigrationDeferred { .. }
+            | Event::MigrationRejected { .. }
             | Event::MigrationStarted { .. }
             | Event::MigrationCompleted { .. }
             | Event::MigrationFailed { .. }
@@ -557,6 +600,9 @@ impl Event {
             Event::QueueEnqueue { .. } => "queue_enqueue",
             Event::QueueDequeue { .. } => "queue_dequeue",
             Event::MigrationDecision { .. } => "migration_decision",
+            Event::MigrationDecided { .. } => "migration_decided",
+            Event::MigrationDeferred { .. } => "migration_deferred",
+            Event::MigrationRejected { .. } => "migration_rejected",
             Event::MigrationStarted { .. } => "migration_started",
             Event::MigrationCompleted { .. } => "migration_completed",
             Event::MigrationFailed { .. } => "migration_failed",
@@ -787,6 +833,28 @@ mod tests {
             Event::AllocationFailed {
                 chunk_id: id,
                 reason: "out of memory".to_string(),
+                sequence_id: 0,
+            },
+            Event::MigrationDecided {
+                chunk_id: id,
+                from: TierId::Ram,
+                to: TierId::Disk,
+                cost_score: 1.5,
+                sequence_id: 0,
+            },
+            Event::MigrationDeferred {
+                chunk_id: id,
+                from: TierId::Ram,
+                to: TierId::Disk,
+                reason: "high io pressure".to_string(),
+                sequence_id: 0,
+            },
+            Event::MigrationRejected {
+                chunk_id: id,
+                from: TierId::Ram,
+                to: TierId::Disk,
+                cost_score: 9.5,
+                threshold: 5.0,
                 sequence_id: 0,
             },
             Event::MigrationStarted {

@@ -37,3 +37,70 @@ This design ensures that **every state change is observable** and **no silent re
 5. **Unified event taxonomy** -- all observability events use the `Event` enum from `ghost-core/src/events.rs`; no ad-hoc `tracing!` or Prometheus calls for lifecycle events.
 
 These contracts are verified by the test suite (`cargo test --workspace`).
+
+## Physical Awareness (Phase 3 §5)
+
+The migration engine is **physically aware**: migration decisions account for real I/O cost, not just hotness and pressure.
+
+### PhysicalCost Model
+
+`PhysicalCost` (`ghost-core/src/state.rs`) captures the I/O characteristics of a tier:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `latency_ms` | `f64` | Estimated operation latency in milliseconds |
+| `bandwidth_bps` | `f64` | Available bandwidth in bytes per second |
+| `reliability` | `f64` | Success rate (0.0–1.0) derived from failure injection config |
+| `io_pressure` | `f32` | Current I/O subsystem pressure (0.0–1.0) |
+| `queue_depth` | `u32` | Number of pending I/O operations |
+
+The `cost_score()` method combines these into a single comparable metric. The `is_too_pressured()` method returns `true` when `io_pressure > 0.85` or `queue_depth > 64`.
+
+### StorageBackend::cost_model()
+
+The `StorageBackend` trait (`ghost-tier/src/backend.rs`) includes a `cost_model(&self) -> PhysicalCost` method with a default implementation returning `PhysicalCost::new()`. Backends override this:
+
+- **RamBackend** — returns near-zero latency (0.01ms), very high bandwidth (10 GB/s), and current memory pressure as `io_pressure`.
+- **SimBackend** — derives cost from `SimConfig` latency/bandwidth settings and failure rates, enabling deterministic physical cost in tests.
+
+### I/O-Aware Migration Decisions
+
+`MigrationEngine::decide_migration()` evaluates each candidate migration against:
+
+1. **Backpressure state** — if the current `BackpressureAction` does not allow the migration's priority, the migration is **rejected** (emits `MigrationRejected`).
+2. **I/O pressure** — if `io_cost.is_too_pressured()`, the migration is **deferred** (emits `MigrationDeferred`).
+3. **I/O cost threshold** — if `io_cost.cost_score() > config.io_cost_threshold`, the migration is **deferred** (emits `MigrationDeferred`).
+4. **Capacity** — if the engine is at `max_concurrent_migrations`, the migration is **deferred** (emits `MigrationDeferred`).
+
+Only when all checks pass is the migration **decided** (emits `MigrationDecided`).
+
+`MigrationEngine::estimate_io_cost()` combines the `cost_model()` of source and destination tiers to produce a deterministic I/O cost estimate for a migration.
+
+### I/O-Aware Backpressure
+
+`BackpressureController::evaluate()` now considers I/O-specific pressure alongside overall system pressure:
+
+- **`io_pressure_soft_limit` (default 0.6)** — I/O pressure above this triggers `Throttle` even when overall pressure is low.
+- **`io_pressure_hard_limit` (default 0.85)** — I/O pressure above this triggers `Reject`.
+- **`queue_depth_threshold` (default 32)** — queue depth above this triggers `Throttle`; above 2× triggers `Reject`.
+
+The controller picks the more restrictive of the I/O-derived action and the overall-pressure-derived action.
+
+### Migration Event Lifecycle
+
+Physical-aware migration emits three event variants:
+
+- **`MigrationDecided`** — migration passed all checks and will proceed.
+- **`MigrationDeferred`** — migration postponed due to I/O pressure, cost, or capacity.
+- **`MigrationRejected`** — migration blocked by backpressure for its priority level.
+
+These events flow through the `EventEmitter` → `EventMultiplexer` → `TracingHandler`/`MetricsBridge` pipeline, ensuring full observability of physical-aware decisions.
+
+### Determinism
+
+All physical cost calculations are deterministic functions of:
+- Backend configuration (latency, bandwidth, failure rates)
+- Current pressure state (snapshot at decision time)
+- Seeded RNG in `SimBackend` (via `ChaCha8Rng`)
+
+Given the same inputs, `decide_migration()` always produces the same output — verified by replay equivalence tests.

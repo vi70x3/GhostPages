@@ -16,6 +16,9 @@ use ghost_core::types::{ChunkId, ChunkMeta, TierId};
 use ghost_policy::PlacementPolicy;
 use ghost_tier::StorageBackend;
 
+pub use ghost_core::state::PhysicalCost;
+
+use crate::backpressure::BackpressureAction;
 use crate::config::MigrationConfig;
 use crate::hotness_tracker::HotnessTracker;
 use crate::trace_log::TraceLog;
@@ -449,6 +452,129 @@ impl MigrationEngine {
     /// Check if the migration engine has capacity for more concurrent migrations.
     pub fn has_capacity(&self) -> bool {
         self.active_count() < self.config.max_concurrent_migrations
+    }
+
+    /// Decide whether a migration should proceed based on I/O-aware criteria.
+    ///
+    /// This method evaluates a pending migration against current system state
+    /// including I/O pressure, estimated I/O cost, queue depth, and backpressure.
+    ///
+    /// Returns `Some(pending_migration)` if the migration should proceed,
+    /// or `None` if it should be deferred or rejected.
+    pub fn decide_migration(
+        &self,
+        migration: &PendingMigration,
+        _pressure: &PressureState,
+        io_cost: &PhysicalCost,
+        backpressure_action: &BackpressureAction,
+    ) -> Option<PendingMigration> {
+        let now = current_timestamp();
+        let sequence_id = now;
+
+        // Check backpressure constraints
+        if !backpressure_action.allows(migration.priority) {
+            // Emit MigrationRejected event
+            if let Some(ref emitter) = self.event_emitter {
+                let _ = emitter.try_emit(Event::MigrationRejected {
+                    sequence_id,
+                    chunk_id: migration.chunk_id,
+                    from: migration.from_tier,
+                    to: migration.to_tier,
+                    cost_score: io_cost.cost_score(),
+                    threshold: self.config.io_cost_threshold,
+                });
+            }
+            return None;
+        }
+
+        // Check I/O pressure threshold
+        if io_cost.is_too_pressured() {
+            // Emit MigrationDeferred event
+            if let Some(ref emitter) = self.event_emitter {
+                let _ = emitter.try_emit(Event::MigrationDeferred {
+                    sequence_id,
+                    chunk_id: migration.chunk_id,
+                    from: migration.from_tier,
+                    to: migration.to_tier,
+                    reason: format!(
+                        "I/O pressure too high: pressure={:.2}, queue_depth={}",
+                        io_cost.io_pressure, io_cost.queue_depth
+                    ),
+                });
+            }
+            return None;
+        }
+
+        // Check I/O cost threshold
+        if io_cost.cost_score() > self.config.io_cost_threshold {
+            // Emit MigrationDeferred event
+            if let Some(ref emitter) = self.event_emitter {
+                let _ = emitter.try_emit(Event::MigrationDeferred {
+                    sequence_id,
+                    chunk_id: migration.chunk_id,
+                    from: migration.from_tier,
+                    to: migration.to_tier,
+                    reason: format!(
+                        "I/O cost exceeds threshold: cost={:.2}, threshold={:.2}",
+                        io_cost.cost_score(),
+                        self.config.io_cost_threshold
+                    ),
+                });
+            }
+            return None;
+        }
+
+        // Check capacity
+        if !self.has_capacity() {
+            // Emit MigrationDeferred event
+            if let Some(ref emitter) = self.event_emitter {
+                let _ = emitter.try_emit(Event::MigrationDeferred {
+                    sequence_id,
+                    chunk_id: migration.chunk_id,
+                    from: migration.from_tier,
+                    to: migration.to_tier,
+                    reason: "migration engine at capacity".to_string(),
+                });
+            }
+            return None;
+        }
+
+        // All checks passed - emit MigrationDecided event
+        if let Some(ref emitter) = self.event_emitter {
+            let _ = emitter.try_emit(Event::MigrationDecided {
+                sequence_id,
+                chunk_id: migration.chunk_id,
+                from: migration.from_tier,
+                to: migration.to_tier,
+                cost_score: io_cost.cost_score(),
+            });
+        }
+
+        Some(migration.clone())
+    }
+
+    /// Get the estimated I/O cost for migrating a chunk between tiers.
+    pub fn estimate_io_cost(&self, from_tier: TierId, to_tier: TierId, _size: usize) -> PhysicalCost {
+        let from_backend = self.backends.get(&from_tier);
+        let to_backend = self.backends.get(&to_tier);
+
+        let from_cost = from_backend.map(|b| b.cost_model()).unwrap_or_default();
+        let to_cost = to_backend.map(|b| b.cost_model()).unwrap_or_default();
+
+        // Combine costs: migration cost is sum of source read + destination write
+        let combined_latency = from_cost.latency_ms + to_cost.latency_ms;
+        let combined_bandwidth = from_cost.bandwidth_bps.min(to_cost.bandwidth_bps);
+        let combined_reliability = from_cost.reliability * to_cost.reliability;
+        let combined_pressure = from_cost.io_pressure.max(to_cost.io_pressure);
+        let combined_queue = from_cost.queue_depth.saturating_add(to_cost.queue_depth);
+
+        PhysicalCost {
+            latency_ms: combined_latency,
+            bandwidth_bps: combined_bandwidth,
+            reliability: combined_reliability,
+            io_pressure: combined_pressure,
+            queue_depth: combined_queue,
+        }
     }
 }
 

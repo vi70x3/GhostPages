@@ -411,6 +411,53 @@ impl EventHandler for TracingHandler {
                         "Migration decision"
                     );
                 }
+                Event::MigrationDecided {
+                    chunk_id,
+                    from,
+                    to,
+                    cost_score,
+                    ..
+                } => {
+                    tracing::info!(
+                        chunk_id = %chunk_id,
+                        from = ?from,
+                        to = ?to,
+                        cost_score,
+                        "Migration decided"
+                    );
+                }
+                Event::MigrationDeferred {
+                    chunk_id,
+                    from,
+                    to,
+                    reason,
+                    ..
+                } => {
+                    tracing::info!(
+                        chunk_id = %chunk_id,
+                        from = ?from,
+                        to = ?to,
+                        reason,
+                        "Migration deferred"
+                    );
+                }
+                Event::MigrationRejected {
+                    chunk_id,
+                    from,
+                    to,
+                    cost_score,
+                    threshold,
+                    ..
+                } => {
+                    tracing::warn!(
+                        chunk_id = %chunk_id,
+                        from = ?from,
+                        to = ?to,
+                        cost_score,
+                        threshold,
+                        "Migration rejected"
+                    );
+                }
             }
 
             Ok(())

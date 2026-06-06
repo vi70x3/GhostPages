@@ -342,6 +342,73 @@ impl Default for PressureState {
     }
 }
 
+// ─── Physical Cost Model ───────────────────────────────────────────────────────
+
+/// Physical cost model for migration decisions.
+///
+/// Captures the I/O characteristics of a storage tier that affect migration
+/// cost. Used by the migration engine to decide whether a migration is
+/// worthwhile given current pressure and queue depth.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhysicalCost {
+    /// Estimated latency per I/O operation in milliseconds.
+    pub latency_ms: f64,
+
+    /// Available bandwidth in bytes per second.
+    pub bandwidth_bps: f64,
+
+    /// Reliability score (0.0 = unreliable, 1.0 = fully reliable).
+    pub reliability: f64,
+
+    /// Current I/O pressure (0.0 = idle, 1.0 = saturated).
+    pub io_pressure: f32,
+
+    /// Current queue depth (number of in-flight I/O operations).
+    pub queue_depth: u32,
+}
+
+impl PhysicalCost {
+    /// Create a new physical cost with default (zero) values.
+    pub fn new() -> Self {
+        Self {
+            latency_ms: 0.0,
+            bandwidth_bps: 0.0,
+            reliability: 1.0,
+            io_pressure: 0.0,
+            queue_depth: 0,
+        }
+    }
+
+    /// Calculate a composite cost score (lower is better for migration).
+    ///
+    /// Combines latency, bandwidth, reliability, and I/O pressure into a
+    /// single score. Higher scores indicate more expensive I/O.
+    pub fn cost_score(&self) -> f64 {
+        let latency_factor = self.latency_ms.max(1.0);
+        let bandwidth_factor = if self.bandwidth_bps > 0.0 {
+            1.0 / (self.bandwidth_bps / 1_000_000.0).min(100.0)
+        } else {
+            100.0
+        };
+        let reliability_penalty = (1.0 - self.reliability) * 10.0;
+        let pressure_penalty = self.io_pressure as f64 * 5.0;
+        let queue_penalty = (self.queue_depth as f64).min(100.0) * 0.1;
+
+        latency_factor + bandwidth_factor + reliability_penalty + pressure_penalty + queue_penalty
+    }
+
+    /// Check if this cost indicates the tier is too pressured for migration.
+    pub fn is_too_pressured(&self) -> bool {
+        self.io_pressure > 0.85 || self.queue_depth > 64
+    }
+}
+
+impl Default for PhysicalCost {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

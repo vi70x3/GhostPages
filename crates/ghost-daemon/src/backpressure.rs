@@ -122,11 +122,49 @@ impl BackpressureController {
     }
 
     /// Evaluate the current pressure and determine the appropriate action.
+    ///
+    /// Considers both overall system pressure and I/O-specific pressure:
+    /// - I/O pressure soft limit: throttles I/O-heavy operations
+    /// - I/O pressure hard limit: rejects all non-critical transfers
+    /// - Queue depth threshold: escalates backpressure when queue is deep
     pub fn evaluate(&self, pressure: &PressureState) -> BackpressureAction {
         let max_pressure = pressure.max_pressure();
         let now = Instant::now();
 
-        let action = if max_pressure >= self.config.critical_threshold {
+        // I/O pressure-specific escalation:
+        // If I/O pressure exceeds the hard limit or queue depth is very high,
+        // escalate directly to Reject regardless of overall pressure.
+        let io_escalation = if pressure.io_pressure >= self.config.io_pressure_hard_limit
+            || pressure.queue_depth > self.config.queue_depth_threshold * 2
+        {
+            Some(BackpressureAction::Reject)
+        } else if pressure.io_pressure >= self.config.io_pressure_soft_limit
+            || pressure.queue_depth > self.config.queue_depth_threshold
+        {
+            Some(BackpressureAction::Throttle)
+        } else {
+            None
+        };
+
+        let action = if let Some(io_action) = io_escalation {
+            // I/O escalation takes precedence when it's more severe than
+            // what overall pressure would dictate
+            let overall_action = if max_pressure >= self.config.critical_threshold {
+                BackpressureAction::CriticalOnly
+            } else if max_pressure >= self.config.reject_threshold {
+                BackpressureAction::Reject
+            } else if max_pressure >= self.config.throttle_threshold {
+                BackpressureAction::Throttle
+            } else {
+                BackpressureAction::Allow
+            };
+            // Pick the more restrictive of the two
+            if io_action as u8 > overall_action as u8 {
+                io_action
+            } else {
+                overall_action
+            }
+        } else if max_pressure >= self.config.critical_threshold {
             BackpressureAction::CriticalOnly
         } else if max_pressure >= self.config.reject_threshold {
             BackpressureAction::Reject

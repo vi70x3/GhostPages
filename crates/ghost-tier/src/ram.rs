@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use ghost_core::state::PressureState;
+use ghost_core::state::{PhysicalCost, PressureState};
 use ghost_core::types::TierId;
 
 use std::collections::BTreeMap;
@@ -197,6 +197,24 @@ impl StorageBackend for RamBackend {
             io_pressure: 0.0,
             queue_depth: 0,
             throughput_bps: 0,
+        }
+    }
+
+    fn cost_model(&self) -> PhysicalCost {
+        let used = self.used.lock();
+        let memory_pressure = if self.capacity > 0 {
+            (*used as f32) / (self.capacity as f32)
+        } else {
+            0.0
+        };
+
+        // RAM has very low latency and high bandwidth
+        PhysicalCost {
+            latency_ms: 0.01,
+            bandwidth_bps: 10_000_000_000.0, // 10 GB/s
+            reliability: 1.0,
+            io_pressure: memory_pressure,
+            queue_depth: 0,
         }
     }
 }

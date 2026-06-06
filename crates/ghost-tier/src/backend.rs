@@ -5,7 +5,7 @@
 //! Simulation) implements this trait.
 
 use async_trait::async_trait;
-use ghost_core::state::PressureState;
+use ghost_core::state::{PhysicalCost, PressureState};
 use ghost_core::types::TierId;
 use std::fmt;
 
@@ -157,6 +157,16 @@ pub trait StorageBackend: Send + Sync + 'static {
     /// indicate more pressure (0.0 = idle, 1.0 = saturated). Implementations
     /// should return a [`PressureState`] with relevant fields populated.
     fn pressure(&self) -> PressureState;
+
+    /// Return the physical cost model for this backend.
+    ///
+    /// The cost model captures I/O characteristics (latency, bandwidth,
+    /// reliability, I/O pressure) that affect migration decisions. The default
+    /// implementation returns a zero-cost model; backends should override this
+    /// to provide accurate cost information.
+    fn cost_model(&self) -> PhysicalCost {
+        PhysicalCost::new()
+    }
 }
 
 impl fmt::Debug for dyn StorageBackend {

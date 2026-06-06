@@ -263,6 +263,50 @@ impl IoScheduler {
         self.completed.len()
     }
 
+    /// Compute the physical cost of all pending I/O requests.
+    ///
+    /// Returns a [`PhysicalCost`] reflecting the current I/O load:
+    /// - `queue_depth` is set to the number of pending requests
+    /// - `io_pressure` is derived from queue depth (saturates at 1.0 at 64+)
+    /// - `latency_ms` is estimated from the oldest pending request age
+    /// - `bandwidth_bps` and `reliability` use sensible defaults
+    pub fn get_pending_cost(&self) -> crate::state::PhysicalCost {
+        let queue_depth = self.pending.len() as u32;
+        let io_pressure = (queue_depth as f32 / 64.0).min(1.0);
+
+        // Estimate latency from the oldest pending request
+        let latency_ms = if let Some((_, oldest)) = self.pending.first_key_value() {
+            let age = oldest.issued_at.elapsed();
+            age.as_millis() as f64
+        } else {
+            0.0
+        };
+
+        // Estimate bandwidth from operation mix
+        let total_ops = self.pending.len().max(1) as f64;
+        let write_count = self
+            .pending
+            .values()
+            .filter(|r| matches!(r.operation, crate::io_events::IoOperation::Write))
+            .count() as f64;
+        let read_count = total_ops - write_count;
+
+        // Writes are typically more expensive than reads
+        let bandwidth_bps = if write_count > 0.0 {
+            1_000_000.0 / (1.0 + write_count / total_ops * 10.0)
+        } else {
+            500_000.0
+        };
+
+        crate::state::PhysicalCost {
+            latency_ms,
+            bandwidth_bps,
+            reliability: 1.0,
+            io_pressure,
+            queue_depth,
+        }
+    }
+
     /// Flush all pending I/O — resolves all in-flight requests as completed.
     ///
     /// This simulates an fsync: all pending I/O is forced to complete.

@@ -18,7 +18,7 @@ use config::SimConfig;
 use ghost_core::emitter::EventEmitter;
 use ghost_core::error::GhostError;
 use ghost_core::io_abstraction::{IoOperation, IoScheduler};
-use ghost_core::state::{ChunkState, PressureState};
+use ghost_core::state::{ChunkState, PhysicalCost, PressureState};
 use ghost_core::time::RealTimeProvider;
 use ghost_core::types::ChunkId;
 use ghost_core::types::TierId;
@@ -447,6 +447,19 @@ impl StorageBackend for SimBackend {
             io_pressure: self.io_pressure() as f32,
             queue_depth: 0,
             throughput_bps: 0,
+        }
+    }
+
+    fn cost_model(&self) -> PhysicalCost {
+        let latency_ms = self.config.latency.base.as_millis() as f64
+            + self.config.latency.per_byte.as_millis() as f64 * 1024.0;
+        let bandwidth_bps = self.config.bandwidth.bytes_per_second as f64;
+        PhysicalCost {
+            latency_ms,
+            bandwidth_bps,
+            reliability: 1.0 - self.config.failure.write_failure_rate,
+            io_pressure: self.io_pressure() as f32,
+            queue_depth: 0,
         }
     }
 }

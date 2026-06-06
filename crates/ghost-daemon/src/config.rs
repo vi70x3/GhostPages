@@ -275,6 +275,10 @@ pub struct MigrationConfig {
 
     /// Timeout in seconds for a single migration operation.
     pub migration_timeout_secs: u64,
+
+    /// I/O cost score threshold above which migrations are deferred.
+    /// Higher values allow more expensive migrations under pressure.
+    pub io_cost_threshold: f64,
 }
 
 impl Default for MigrationConfig {
@@ -290,6 +294,7 @@ impl Default for MigrationConfig {
             eviction_pressure_threshold: 0.7,
             max_chunk_size_for_migration: 256 * 1024 * 1024, // 256 MB
             migration_timeout_secs: 120,
+            io_cost_threshold: 100.0,
         }
     }
 }
@@ -314,6 +319,15 @@ pub struct BackpressureConfig {
 
     /// Cooldown period in seconds after pressure subsides before resuming normal operations.
     pub cooldown_secs: u64,
+
+    /// I/O pressure soft limit: above this, I/O-heavy migrations are throttled.
+    pub io_pressure_soft_limit: f32,
+
+    /// I/O pressure hard limit: above this, all non-critical transfers are rejected.
+    pub io_pressure_hard_limit: f32,
+
+    /// Queue depth threshold above which backpressure escalates.
+    pub queue_depth_threshold: u32,
 }
 
 impl Default for BackpressureConfig {
@@ -325,6 +339,9 @@ impl Default for BackpressureConfig {
             evaluation_interval_ms: 1000,
             enabled: true,
             cooldown_secs: 10,
+            io_pressure_soft_limit: 0.6,
+            io_pressure_hard_limit: 0.85,
+            queue_depth_threshold: 32,
         }
     }
 }

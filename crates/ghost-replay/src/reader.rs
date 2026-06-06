@@ -25,6 +25,8 @@ pub struct TraceReader {
     reader: BufReader<File>,
     header: TraceFileHeader,
     current_index: u64,
+    /// Actual byte size of the header as read from disk (accounts for variable-length domain data).
+    header_size: usize,
 }
 
 impl TraceReader {
@@ -38,10 +40,14 @@ impl TraceReader {
         let mut reader = BufReader::new(file);
         let header = TraceFileHeader::read_from(&mut reader)?;
 
+        // Compute actual header size (fixed 36 bytes + 2 bytes for domain count + domain bytes)
+        let header_size = TraceFileHeader::SIZE + 2 + header.domains.len();
+
         Ok(Self {
             reader,
             header,
             current_index: 0,
+            header_size,
         })
     }
 
@@ -99,7 +105,7 @@ impl TraceReader {
         // If we need to seek backwards, restart from beginning
         if self.current_index > 0 {
             self.reader
-                .seek(std::io::SeekFrom::Start(TraceFileHeader::SIZE as u64))
+                .seek(std::io::SeekFrom::Start(self.header_size as u64))
                 .map_err(|e| GhostError::ReplayError(format!("seek failed: {}", e)))?;
             self.current_index = 0;
         }

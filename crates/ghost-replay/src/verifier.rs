@@ -206,6 +206,172 @@ impl ReplayVerifier {
         let events = reader.read_all()?;
         Ok(self.verify_determinism(&events))
     }
+
+    /// Verifies cross-domain equivalence by comparing state reconstructions.
+    ///
+    /// Replays the same events through state reconstructors for each domain
+    /// and compares the resulting state snapshots to classify differences as
+    /// "same decisions, different timing" vs "different decisions".
+    pub fn verify_cross_domain(
+        &self,
+        baseline_events: &[TraceEvent],
+        candidate_events: &[TraceEvent],
+        baseline_domain: crate::format::Domain,
+        candidate_domain: crate::format::Domain,
+    ) -> CrossDomainResult {
+        use crate::state_reconstructor::StateReconstructor;
+
+        let mut baseline_recon = StateReconstructor::new();
+        let mut candidate_recon = StateReconstructor::new();
+
+        baseline_recon.process_events(baseline_events);
+        candidate_recon.process_events(candidate_events);
+
+        let diffs = StateReconstructor::compare(baseline_recon.snapshots(), candidate_recon.snapshots());
+
+        if diffs.is_empty() {
+            return CrossDomainResult::identical(baseline_domain, candidate_domain, baseline_events.len());
+        }
+
+        // Classify each divergence
+        let mut timing_diffs = Vec::new();
+        let mut decision_diffs = Vec::new();
+
+        for &idx in &diffs {
+            let baseline_snap = baseline_recon.snapshot_at(idx);
+            let candidate_snap = candidate_recon.snapshot_at(idx);
+
+            if let (Some(bs), Some(cs)) = (baseline_snap, candidate_snap) {
+                // Check if chunk states and decisions are the same but timing differs
+                if bs.chunk_states == cs.chunk_states
+                    && bs.total_allocated == cs.total_allocated
+                    && bs.total_stored == cs.total_stored
+                {
+                    timing_diffs.push(idx);
+                } else {
+                    decision_diffs.push(idx);
+                }
+            } else {
+                decision_diffs.push(idx);
+            }
+        }
+
+        CrossDomainResult::divergent(
+            baseline_domain,
+            candidate_domain,
+            baseline_events.len().min(candidate_events.len()),
+            timing_diffs,
+            decision_diffs,
+            baseline_recon.snapshots().to_vec(),
+            candidate_recon.snapshots().to_vec(),
+        )
+    }
+}
+
+/// Result of a cross-domain verification comparing two replay domains.
+#[derive(Debug, Clone)]
+pub struct CrossDomainResult {
+    /// The baseline domain.
+    pub baseline_domain: crate::format::Domain,
+    /// The candidate domain.
+    pub candidate_domain: crate::format::Domain,
+    /// Number of events compared.
+    pub events_compared: usize,
+    /// Whether the domains produced equivalent results.
+    pub equivalent: bool,
+    /// Indices where only timing differed (same decisions, different timing).
+    pub timing_differences: Vec<usize>,
+    /// Indices where decisions differed (different outcomes).
+    pub decision_differences: Vec<usize>,
+    /// Baseline state snapshots.
+    pub baseline_snapshots: Vec<crate::state_reconstructor::StateSnapshot>,
+    /// Candidate state snapshots.
+    pub candidate_snapshots: Vec<crate::state_reconstructor::StateSnapshot>,
+    /// Human-readable summary.
+    pub summary: String,
+}
+
+impl CrossDomainResult {
+    /// Creates an identical result (no differences found).
+    pub fn identical(
+        baseline_domain: crate::format::Domain,
+        candidate_domain: crate::format::Domain,
+        events_compared: usize,
+    ) -> Self {
+        Self {
+            baseline_domain,
+            candidate_domain,
+            events_compared,
+            equivalent: true,
+            timing_differences: Vec::new(),
+            decision_differences: Vec::new(),
+            baseline_snapshots: Vec::new(),
+            candidate_snapshots: Vec::new(),
+            summary: format!(
+                "Cross-domain IDENTICAL: {:?} vs {:?} ({} events compared)",
+                baseline_domain, candidate_domain, events_compared
+            ),
+        }
+    }
+
+    /// Creates a divergent result with classified differences.
+    pub fn divergent(
+        baseline_domain: crate::format::Domain,
+        candidate_domain: crate::format::Domain,
+        events_compared: usize,
+        timing_differences: Vec<usize>,
+        decision_differences: Vec<usize>,
+        baseline_snapshots: Vec<crate::state_reconstructor::StateSnapshot>,
+        candidate_snapshots: Vec<crate::state_reconstructor::StateSnapshot>,
+    ) -> Self {
+        let summary = if decision_differences.is_empty() {
+            format!(
+                "Cross-domain EQUIVALENT (timing only): {:?} vs {:?} — {} timing diff(s), 0 decision diffs",
+                baseline_domain, candidate_domain, timing_differences.len()
+            )
+        } else {
+            format!(
+                "Cross-domain DIVERGENT: {:?} vs {:?} — {} timing diff(s), {} decision diff(s)",
+                baseline_domain,
+                candidate_domain,
+                timing_differences.len(),
+                decision_differences.len()
+            )
+        };
+
+        Self {
+            baseline_domain,
+            candidate_domain,
+            events_compared,
+            equivalent: decision_differences.is_empty(),
+            timing_differences,
+            decision_differences,
+            baseline_snapshots,
+            candidate_snapshots,
+            summary,
+        }
+    }
+
+    /// Returns true if the domains are fully equivalent (no differences at all).
+    pub fn is_fully_equivalent(&self) -> bool {
+        self.equivalent && self.timing_differences.is_empty()
+    }
+
+    /// Returns true if the domains made the same decisions but with different timing.
+    pub fn is_timing_only(&self) -> bool {
+        self.equivalent && !self.timing_differences.is_empty()
+    }
+
+    /// Returns true if the domains made different decisions.
+    pub fn has_decision_divergence(&self) -> bool {
+        !self.decision_differences.is_empty()
+    }
+}
+
+impl fmt::Display for CrossDomainResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.summary)
+    }
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────────────────
@@ -470,5 +636,74 @@ mod tests {
         let result = verifier.verify_determinism(&[]);
         assert!(result.passed());
         assert_eq!(result.iterations_run, 2);
+    }
+
+    #[test]
+    fn test_cross_domain_identical() {
+        let events = sample_events();
+        let config = VerifierConfig::default();
+        let verifier = ReplayVerifier::new(config);
+        let result = verifier.verify_cross_domain(
+            &events,
+            &events,
+            crate::format::Domain::CpuSimulation,
+            crate::format::Domain::DiskIo,
+        );
+        assert!(result.is_fully_equivalent());
+        assert!(result.timing_differences.is_empty());
+        assert!(result.decision_differences.is_empty());
+    }
+
+    #[test]
+    fn test_cross_domain_divergent() {
+        let baseline = vec![
+            TraceEvent::ChunkCreated {
+                chunk_id: ChunkId::from_data(b"a"),
+                timestamp: 1000,
+                size: 100,
+                tier: TierId::Ram,
+            },
+            TraceEvent::ChunkStateChanged {
+                chunk_id: ChunkId::from_data(b"a"),
+                from: ChunkState::Allocated,
+                to: ChunkState::Stored,
+                timestamp: 1001,
+            },
+        ];
+        let candidate = vec![
+            TraceEvent::ChunkCreated {
+                chunk_id: ChunkId::from_data(b"a"),
+                timestamp: 1000,
+                size: 100,
+                tier: TierId::Ram,
+            },
+            TraceEvent::ChunkStateChanged {
+                chunk_id: ChunkId::from_data(b"a"),
+                from: ChunkState::Allocated,
+                to: ChunkState::Cached,
+                timestamp: 1001,
+            },
+        ];
+        let config = VerifierConfig::default();
+        let verifier = ReplayVerifier::new(config);
+        let result = verifier.verify_cross_domain(
+            &baseline,
+            &candidate,
+            crate::format::Domain::CpuSimulation,
+            crate::format::Domain::FailureInjected,
+        );
+        assert!(result.has_decision_divergence());
+        assert!(!result.is_fully_equivalent());
+    }
+
+    #[test]
+    fn test_cross_domain_result_display() {
+        let result = CrossDomainResult::identical(
+            crate::format::Domain::Deterministic,
+            crate::format::Domain::RealIo,
+            10,
+        );
+        let display = format!("{}", result);
+        assert!(display.contains("IDENTICAL"));
     }
 }

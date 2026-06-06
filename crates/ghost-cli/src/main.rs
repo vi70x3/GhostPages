@@ -515,6 +515,21 @@ async fn main() -> Result<()> {
                                 index, baseline_type, candidate_type
                             );
                         }
+                        ghost_replay::DivergenceType::TimingOnly { .. } => {
+                            println!("  Timing-only difference");
+                        }
+                        ghost_replay::DivergenceType::DecisionDifference { .. } => {
+                            println!("  Decision difference");
+                        }
+                        ghost_replay::DivergenceType::OrderingDifference { .. } => {
+                            println!("  Ordering difference");
+                        }
+                        ghost_replay::DivergenceType::MissingEvent { .. } => {
+                            println!("  Missing event");
+                        }
+                        ghost_replay::DivergenceType::ChecksumMismatch { .. } => {
+                            println!("  Checksum mismatch");
+                        }
                     }
                 }
                 std::process::exit(1);

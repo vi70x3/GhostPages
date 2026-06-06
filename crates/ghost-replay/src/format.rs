@@ -16,12 +16,71 @@ pub const TRACE_MAGIC: &[u8; 8] = b"GHOSTTRC";
 /// Current trace file format version.
 pub const TRACE_VERSION: u16 = 1;
 
+/// Trace file format version that introduced domain metadata.
+pub const TRACE_VERSION_WITH_DOMAINS: u16 = 2;
+
 /// Bit flags for trace file header.
 pub mod flags {
     /// File payloads are compressed.
     pub const COMPRESSED: u16 = 0x0001;
     /// File includes CRC32 checksums per record.
     pub const HAS_CHECKSUM: u16 = 0x0002;
+}
+
+/// Domain classification for trace events.
+///
+/// Used to distinguish between different execution environments
+/// so that cross-domain replay validation can classify differences
+/// as "same decisions, different timing" vs "different decisions".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum Domain {
+    /// CPU-simulated environment (deterministic simulation).
+    CpuSimulation,
+    /// Disk I/O backed environment.
+    DiskIo,
+    /// Failure-injected environment (chaos testing).
+    FailureInjected,
+    /// Fully deterministic replay environment.
+    Deterministic,
+    /// Real I/O environment (production traces).
+    RealIo,
+}
+
+impl Domain {
+    /// Encode domain as a single byte for binary serialization.
+    pub fn to_byte(self) -> u8 {
+        match self {
+            Domain::CpuSimulation => 0,
+            Domain::DiskIo => 1,
+            Domain::FailureInjected => 2,
+            Domain::Deterministic => 3,
+            Domain::RealIo => 4,
+        }
+    }
+
+    /// Decode domain from a single byte.
+    pub fn from_byte(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Domain::CpuSimulation),
+            1 => Some(Domain::DiskIo),
+            2 => Some(Domain::FailureInjected),
+            3 => Some(Domain::Deterministic),
+            4 => Some(Domain::RealIo),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Domain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Domain::CpuSimulation => write!(f, "cpu-simulation"),
+            Domain::DiskIo => write!(f, "disk-io"),
+            Domain::FailureInjected => write!(f, "failure-injected"),
+            Domain::Deterministic => write!(f, "deterministic"),
+            Domain::RealIo => write!(f, "real-io"),
+        }
+    }
 }
 
 /// File header written at the start of every trace file.
@@ -39,11 +98,13 @@ pub struct TraceFileHeader {
     pub created_at: u64,
     /// Byte offset to the metadata section at end of file.
     pub metadata_offset: u64,
+    /// Domains this trace file covers (empty for v1 files).
+    pub domains: Vec<Domain>,
 }
 
 impl TraceFileHeader {
-    /// Serialized size of the header in bytes.
-    pub const SIZE: usize = 8 + 2 + 2 + 8 + 8 + 8; // 36 bytes
+    /// Serialized size of the fixed header fields in bytes.
+    pub const SIZE: usize = 8 + 2 + 2 + 8 + 8 + 8 + 2; // 38 bytes (includes 2-byte domain length prefix)
 
     /// Create a new header with the given parameters.
     pub fn new(flags: u16, chunk_count: u64, created_at: u64, metadata_offset: u64) -> Self {
@@ -54,6 +115,26 @@ impl TraceFileHeader {
             chunk_count,
             created_at,
             metadata_offset,
+            domains: Vec::new(),
+        }
+    }
+
+    /// Create a new header with domain metadata.
+    pub fn with_domains(
+        flags: u16,
+        chunk_count: u64,
+        created_at: u64,
+        metadata_offset: u64,
+        domains: Vec<Domain>,
+    ) -> Self {
+        Self {
+            magic: *TRACE_MAGIC,
+            version: TRACE_VERSION_WITH_DOMAINS,
+            flags,
+            chunk_count,
+            created_at,
+            metadata_offset,
+            domains,
         }
     }
 
@@ -65,6 +146,13 @@ impl TraceFileHeader {
         writer.write_all(&self.chunk_count.to_le_bytes())?;
         writer.write_all(&self.created_at.to_le_bytes())?;
         writer.write_all(&self.metadata_offset.to_le_bytes())?;
+
+        // Write domain metadata (v2 extension)
+        let domain_bytes: Vec<u8> = self.domains.iter().map(|d| d.to_byte()).collect();
+        let domain_len = domain_bytes.len() as u16;
+        writer.write_all(&domain_len.to_le_bytes())?;
+        writer.write_all(&domain_bytes)?;
+
         Ok(())
     }
 
@@ -97,6 +185,21 @@ impl TraceFileHeader {
         reader.read_exact(&mut buf8)?;
         let metadata_offset = u64::from_le_bytes(buf8);
 
+        // Try to read domain metadata (v2 extension). If EOF, default to empty.
+        let domains = match read_exact_or_eof(reader, &mut buf2) {
+            Ok(true) => Vec::new(), // EOF — old format without domains
+            Ok(false) => {
+                let domain_len = u16::from_le_bytes(buf2) as usize;
+                let mut domain_bytes = vec![0u8; domain_len];
+                reader.read_exact(&mut domain_bytes)?;
+                domain_bytes
+                    .iter()
+                    .filter_map(|&b| Domain::from_byte(b))
+                    .collect()
+            }
+            Err(e) => return Err(GhostError::ReplayError(format!("failed to read domains: {}", e))),
+        };
+
         Ok(Self {
             magic,
             version,
@@ -104,6 +207,7 @@ impl TraceFileHeader {
             chunk_count,
             created_at,
             metadata_offset,
+            domains,
         })
     }
 

@@ -54,6 +54,49 @@ pub enum DivergenceType {
         /// Event type in the candidate stream.
         candidate_type: &'static str,
     },
+    /// Events differ only in timing (same decisions, different timestamps).
+    TimingOnly {
+        /// Index of the first timing difference.
+        index: usize,
+        /// Baseline timestamp.
+        baseline_ts: u64,
+        /// Candidate timestamp.
+        candidate_ts: u64,
+    },
+    /// Events reflect different policy decisions.
+    DecisionDifference {
+        /// Index where decisions diverge.
+        index: usize,
+        /// Human-readable description of the decision difference.
+        description: String,
+    },
+    /// Events are in different order (same events, different sequence).
+    OrderingDifference {
+        /// Index where ordering first differs.
+        index: usize,
+        /// Baseline event type at this index.
+        baseline_type: &'static str,
+        /// Candidate event type at this index.
+        candidate_type: &'static str,
+    },
+    /// An event present in one stream is missing in the other.
+    MissingEvent {
+        /// Index where the event is missing.
+        index: usize,
+        /// Which stream is missing the event.
+        missing_in: crate::format::Domain,
+        /// Description of the missing event.
+        description: String,
+    },
+    /// Checksums differ between streams.
+    ChecksumMismatch {
+        /// Category of the mismatching event.
+        category: HashCategory,
+        /// Baseline hash (hex).
+        baseline_hash: String,
+        /// Candidate hash (hex).
+        candidate_hash: String,
+    },
 }
 
 impl fmt::Display for DivergenceType {
@@ -109,6 +152,57 @@ impl fmt::Display for DivergenceType {
                     index, baseline_type, candidate_type
                 )
             }
+            DivergenceType::TimingOnly {
+                index,
+                baseline_ts,
+                candidate_ts,
+            } => {
+                write!(
+                    f,
+                    "TimingOnly at index {}: baseline_ts={}, candidate_ts={}",
+                    index, baseline_ts, candidate_ts
+                )
+            }
+            DivergenceType::DecisionDifference { index, description } => {
+                write!(
+                    f,
+                    "DecisionDifference at index {}: {}",
+                    index, description
+                )
+            }
+            DivergenceType::OrderingDifference {
+                index,
+                baseline_type,
+                candidate_type,
+            } => {
+                write!(
+                    f,
+                    "OrderingDifference at index {}: baseline={}, candidate={}",
+                    index, baseline_type, candidate_type
+                )
+            }
+            DivergenceType::MissingEvent {
+                index,
+                missing_in,
+                description,
+            } => {
+                write!(
+                    f,
+                    "MissingEvent at index {} (missing in {}): {}",
+                    index, missing_in, description
+                )
+            }
+            DivergenceType::ChecksumMismatch {
+                category,
+                baseline_hash,
+                candidate_hash,
+            } => {
+                write!(
+                    f,
+                    "ChecksumMismatch (category: {}): baseline={}, candidate={}",
+                    category, baseline_hash, candidate_hash
+                )
+            }
         }
     }
 }
@@ -148,6 +242,11 @@ impl DivergenceReport {
             DivergenceType::TimestampMismatch { index, .. } => Some(*index),
             DivergenceType::ChunkIdMismatch { index, .. } => Some(*index),
             DivergenceType::TypeMismatch { index, .. } => Some(*index),
+            DivergenceType::TimingOnly { index, .. } => Some(*index),
+            DivergenceType::DecisionDifference { index, .. } => Some(*index),
+            DivergenceType::OrderingDifference { index, .. } => Some(*index),
+            DivergenceType::MissingEvent { index, .. } => Some(*index),
+            DivergenceType::ChecksumMismatch { .. } => None,
         });
         Self {
             identical: false,
@@ -480,5 +579,70 @@ mod tests {
         };
         let report = detect_divergence(&baseline, &candidate);
         assert_eq!(report.first_divergence_index, Some(1));
+    }
+
+    #[test]
+    fn test_new_divergence_type_display() {
+        let timing = DivergenceType::TimingOnly {
+            index: 3,
+            baseline_ts: 1000,
+            candidate_ts: 1050,
+        };
+        let display = format!("{}", timing);
+        assert!(display.contains("TimingOnly"));
+        assert!(display.contains("1000"));
+        assert!(display.contains("1050"));
+
+        let decision = DivergenceType::DecisionDifference {
+            index: 5,
+            description: "different eviction target".to_string(),
+        };
+        let display = format!("{}", decision);
+        assert!(display.contains("DecisionDifference"));
+        assert!(display.contains("different eviction target"));
+
+        let ordering = DivergenceType::OrderingDifference {
+            index: 2,
+            baseline_type: "ChunkCreated",
+            candidate_type: "Eviction",
+        };
+        let display = format!("{}", ordering);
+        assert!(display.contains("OrderingDifference"));
+
+        let missing = DivergenceType::MissingEvent {
+            index: 4,
+            missing_in: crate::format::Domain::DiskIo,
+            description: "eviction event missing".to_string(),
+        };
+        let display = format!("{}", missing);
+        assert!(display.contains("MissingEvent"));
+        assert!(display.contains("disk-io"));
+
+        let checksum = DivergenceType::ChecksumMismatch {
+            category: HashCategory::Content,
+            baseline_hash: "abc123".to_string(),
+            candidate_hash: "def456".to_string(),
+        };
+        let display = format!("{}", checksum);
+        assert!(display.contains("ChecksumMismatch"));
+    }
+
+    #[test]
+    fn test_new_divergence_in_report() {
+        let divergences = vec![
+            DivergenceType::TimingOnly {
+                index: 1,
+                baseline_ts: 1000,
+                candidate_ts: 1050,
+            },
+            DivergenceType::DecisionDifference {
+                index: 3,
+                description: "different tier selected".to_string(),
+            },
+        ];
+        let report = DivergenceReport::divergent(divergences, 10);
+        assert!(!report.identical);
+        assert_eq!(report.first_divergence_index, Some(1));
+        assert_eq!(report.divergences.len(), 2);
     }
 }

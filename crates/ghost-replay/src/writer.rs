@@ -55,6 +55,15 @@ impl TraceWriter {
     /// The file is created with a placeholder header. Call `close()` to
     /// finalize the header and write metadata.
     pub fn create(path: &Path, flags: u16) -> GhostResult<Self> {
+        Self::create_with_domains(path, flags, Vec::new())
+    }
+
+    /// Create a new trace writer with domain metadata.
+    pub fn create_with_domains(
+        path: &Path,
+        flags: u16,
+        domains: Vec<super::format::Domain>,
+    ) -> GhostResult<Self> {
         let file = File::create(path).map_err(|e| {
             ghost_core::error::GhostError::ReplayError(format!(
                 "failed to create trace file: {}",
@@ -62,11 +71,11 @@ impl TraceWriter {
             ))
         })?;
         let mut writer = BufWriter::new(file);
-    
+
         // Write a placeholder header (will be updated on close)
-        let header = TraceFileHeader::new(flags, 0, 0, 0);
+        let header = TraceFileHeader::with_domains(flags, 0, 0, 0, domains);
         header.write_to(&mut writer)?;
-    
+
         Ok(Self {
             writer,
             header,
@@ -134,11 +143,12 @@ impl TraceWriter {
 
         let created_at = self.current_time_secs;
 
-        let final_header = TraceFileHeader::new(
+        let final_header = TraceFileHeader::with_domains(
             self.header.flags,
             self.record_count,
             created_at,
             metadata_offset,
+            self.header.domains.clone(),
         );
         final_header.write_to(&mut self.writer)?;
 

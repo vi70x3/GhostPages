@@ -3,6 +3,9 @@
 //! Implements the core migration logic: evaluating which chunks should be
 //! promoted to faster tiers, evicted from pressured tiers, or left in place.
 //! Uses the PlacementPolicy trait for all placement decisions.
+//!
+//! Includes promotion cost model (Disk↔RAM), eviction cooldown with
+//! anti-oscillation to prevent migration storms.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -42,6 +45,10 @@ pub struct MigrationStats {
     pub last_evaluation: u64,
     /// Number of chunks currently being migrated.
     pub active_migrations: usize,
+    /// Number of evictions blocked by cooldown.
+    pub cooldown_blocks: u64,
+    /// Number of evictions blocked by anti-oscillation.
+    pub anti_oscillation_blocks: u64,
 }
 
 /// A pending migration operation.
@@ -63,6 +70,73 @@ pub struct PendingMigration {
     pub identified_at: u64,
 }
 
+/// Eviction cooldown tracker to prevent migration storms.
+///
+/// Tracks the last eviction and promotion time per chunk to enforce:
+/// - Minimum cooldown between evictions of the same chunk
+/// - Anti-oscillation: if a chunk was recently promoted, don't evict it
+#[derive(Debug)]
+pub struct EvictionCooldown {
+    /// Last eviction timestamp per chunk (microseconds).
+    last_eviction: BTreeMap<ChunkId, u64>,
+    /// Last promotion timestamp per chunk (microseconds).
+    last_promotion: BTreeMap<ChunkId, u64>,
+    /// Minimum cooldown between evictions of the same chunk (microseconds).
+    cooldown_us: u64,
+}
+
+impl EvictionCooldown {
+    /// Create a new eviction cooldown tracker.
+    ///
+    /// # Arguments
+    /// * `cooldown_secs` - Minimum seconds between evictions of the same chunk.
+    pub fn new(cooldown_secs: u64) -> Self {
+        Self {
+            last_eviction: BTreeMap::new(),
+            last_promotion: BTreeMap::new(),
+            cooldown_us: cooldown_secs * 1_000_000,
+        }
+    }
+
+    /// Check if a chunk can be evicted.
+    ///
+    /// Returns `true` if the chunk is eligible for eviction:
+    /// - Not in cooldown from a previous eviction
+    /// - Not recently promoted (anti-oscillation)
+    pub fn can_evict(&self, chunk_id: &ChunkId, now_us: u64) -> bool {
+        // Check cooldown from last eviction
+        if let Some(&last_evict) = self.last_eviction.get(chunk_id) {
+            if now_us.saturating_sub(last_evict) < self.cooldown_us {
+                return false;
+            }
+        }
+
+        // Anti-oscillation: if recently promoted, don't evict
+        if let Some(&last_promo) = self.last_promotion.get(chunk_id) {
+            if now_us.saturating_sub(last_promo) < self.cooldown_us {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Record that a chunk was evicted.
+    pub fn record_eviction(&mut self, chunk_id: ChunkId, now_us: u64) {
+        self.last_eviction.insert(chunk_id, now_us);
+    }
+
+    /// Record that a chunk was promoted.
+    pub fn record_promotion(&mut self, chunk_id: ChunkId, now_us: u64) {
+        self.last_promotion.insert(chunk_id, now_us);
+    }
+
+    /// Get the cooldown duration in microseconds.
+    pub fn cooldown_us(&self) -> u64 {
+        self.cooldown_us
+    }
+}
+
 /// Migration engine that evaluates and executes pressure-driven chunk migrations.
 pub struct MigrationEngine {
     config: MigrationConfig,
@@ -76,6 +150,8 @@ pub struct MigrationEngine {
     active_migrations: Arc<std::sync::Mutex<BTreeSet<ChunkId>>>,
     /// Timestamp of the last migration for each chunk (rate limiting).
     last_migration: Arc<std::sync::Mutex<BTreeMap<ChunkId, u64>>>,
+    /// Eviction cooldown tracker to prevent migration storms.
+    eviction_cooldown: Arc<std::sync::Mutex<EvictionCooldown>>,
     /// Optional event emitter for unified event taxonomy.
     event_emitter: Option<EventEmitter>,
 }
@@ -90,6 +166,7 @@ impl MigrationEngine {
         trace_log: Arc<TraceLog>,
         backends: BTreeMap<TierId, Arc<dyn StorageBackend>>,
     ) -> Self {
+        let cooldown_secs = config.min_migration_interval_secs.max(5);
         Self {
             config,
             policy,
@@ -100,6 +177,7 @@ impl MigrationEngine {
             stats: Arc::new(std::sync::Mutex::new(MigrationStats::default())),
             active_migrations: Arc::new(std::sync::Mutex::new(BTreeSet::new())),
             last_migration: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
+            eviction_cooldown: Arc::new(std::sync::Mutex::new(EvictionCooldown::new(cooldown_secs))),
             event_emitter: None,
         }
     }
@@ -107,6 +185,11 @@ impl MigrationEngine {
     /// Set the event emitter for unified event taxonomy.
     pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
         self.event_emitter = Some(emitter);
+    }
+
+    /// Get a reference to the eviction cooldown tracker.
+    pub fn eviction_cooldown(&self) -> &Arc<std::sync::Mutex<EvictionCooldown>> {
+        &self.eviction_cooldown
     }
 
     /// Evaluate the current system state and identify migrations to perform.
@@ -318,6 +401,7 @@ impl MigrationEngine {
         let cold_chunks = self.hotness_tracker.find_cold_chunks(self.config.cold_threshold);
         let now = current_timestamp();
         let mut evictions = Vec::new();
+        let mut cooldown = self.eviction_cooldown.lock().unwrap();
 
         for (chunk_id, hotness) in &cold_chunks {
             let sm = self.state_machine.lock().unwrap();
@@ -326,6 +410,13 @@ impl MigrationEngine {
                 continue;
             }
             drop(sm);
+
+            // Check eviction cooldown and anti-oscillation
+            if !cooldown.can_evict(chunk_id, now) {
+                let mut stats = self.stats.lock().unwrap();
+                stats.cooldown_blocks += 1;
+                continue;
+            }
 
             let meta = ChunkMeta {
                 id: *chunk_id,
@@ -357,6 +448,9 @@ impl MigrationEngine {
                         identified_at: now,
                     });
 
+                    // Record eviction in cooldown tracker
+                    cooldown.record_eviction(evict_id, now);
+
                     // Emit Eviction trace event
                     self.trace_log.record(TraceEvent::Eviction {
                         chunk_id: evict_id,
@@ -380,6 +474,77 @@ impl MigrationEngine {
         }
 
         evictions
+    }
+
+    /// Estimate the promotion cost for migrating a chunk between tiers.
+    ///
+    /// Disk → RAM promotion cost includes: read latency + decompression + write to RAM
+    /// RAM → Disk demotion cost includes: compression + write latency + fsync
+    ///
+    /// Cost is deterministic when using `DeterministicClock`.
+    pub fn estimate_promotion_cost(
+        &self,
+        _chunk_id: &ChunkId,
+        from_tier: TierId,
+        to_tier: TierId,
+        size: usize,
+    ) -> PhysicalCost {
+        let from_backend = self.backends.get(&from_tier);
+        let to_backend = self.backends.get(&to_tier);
+
+        let from_cost = from_backend.map(|b| b.cost_model()).unwrap_or_default();
+        let to_cost = to_backend.map(|b| b.cost_model()).unwrap_or_default();
+
+        // Base migration cost: source read + destination write
+        let base_latency = from_cost.latency_ms + to_cost.latency_ms;
+        let base_bandwidth = from_cost.bandwidth_bps.min(to_cost.bandwidth_bps);
+
+        // Determine if this involves disk I/O
+        let is_disk_involved = from_tier == TierId::Disk || to_tier == TierId::Disk;
+
+        // Additional overhead for disk operations
+        let (overhead_latency, overhead_reliability) = if is_disk_involved {
+            // Disk → RAM: read from disk + decompress + write to RAM
+            // RAM → Disk: compress + write to disk + fsync
+            let compression_overhead_ms = if size > 0 {
+                // Estimate compression/decompression time: ~100 MB/s
+                (size as f64 / (100.0 * 1024.0 * 1024.0)) * 1000.0
+            } else {
+                0.0
+            };
+
+            // fsync overhead for disk writes (typically 0.5-2ms)
+            let fsync_overhead_ms = if to_tier == TierId::Disk {
+                1.0 // 1ms fsync estimate
+            } else {
+                0.0
+            };
+
+            (compression_overhead_ms + fsync_overhead_ms, 0.999)
+        } else {
+            (0.0, 1.0)
+        };
+
+        let total_latency = base_latency + overhead_latency;
+        let total_bandwidth = if is_disk_involved {
+            // For disk migrations, bandwidth is limited by the disk
+            let disk_bandwidth = if from_tier == TierId::Disk {
+                from_cost.bandwidth_bps
+            } else {
+                to_cost.bandwidth_bps
+            };
+            base_bandwidth.min(disk_bandwidth)
+        } else {
+            base_bandwidth
+        };
+
+        PhysicalCost {
+            latency_ms: total_latency,
+            bandwidth_bps: total_bandwidth,
+            reliability: from_cost.reliability * to_cost.reliability * overhead_reliability,
+            io_pressure: from_cost.io_pressure.max(to_cost.io_pressure),
+            queue_depth: from_cost.queue_depth.saturating_add(to_cost.queue_depth),
+        }
     }
 
     /// Convert a pending migration into a transfer job.
@@ -417,6 +582,12 @@ impl MigrationEngine {
 
         let mut last = self.last_migration.lock().unwrap();
         last.insert(chunk_id, current_timestamp());
+
+        // Record promotion in cooldown tracker for anti-oscillation
+        if success {
+            let mut cooldown = self.eviction_cooldown.lock().unwrap();
+            cooldown.record_promotion(chunk_id, current_timestamp());
+        }
 
         // Emit unified event
         if let Some(ref emitter) = self.event_emitter {
@@ -788,5 +959,105 @@ mod tests {
         });
 
         assert_eq!(migrations[0].priority, TransferPriority::Critical);
+    }
+
+    #[test]
+    fn test_eviction_cooldown_creation() {
+        let cooldown = EvictionCooldown::new(5);
+        assert_eq!(cooldown.cooldown_us(), 5_000_000);
+    }
+
+    #[test]
+    fn test_eviction_cooldown_allows_first_eviction() {
+        let cooldown = EvictionCooldown::new(5);
+        let id = test_chunk_id(1);
+        // First eviction should always be allowed
+        assert!(cooldown.can_evict(&id, 1_000_000));
+    }
+
+    #[test]
+    fn test_eviction_cooldown_blocks_rapid_eviction() {
+        let mut cooldown = EvictionCooldown::new(5);
+        let id = test_chunk_id(1);
+        let now = 1_000_000;
+
+        // Record an eviction
+        cooldown.record_eviction(id, now);
+
+        // Try to evict again within cooldown window
+        assert!(!cooldown.can_evict(&id, now + 1_000_000)); // 1 second later
+        assert!(!cooldown.can_evict(&id, now + 4_000_000)); // 4 seconds later
+
+        // After cooldown window (5+ seconds), should be allowed
+        assert!(cooldown.can_evict(&id, now + 5_000_000)); // exactly 5 seconds
+        assert!(cooldown.can_evict(&id, now + 6_000_000)); // 6 seconds later
+    }
+
+    #[test]
+    fn test_eviction_cooldown_anti_oscillation() {
+        let mut cooldown = EvictionCooldown::new(5);
+        let id = test_chunk_id(1);
+        let now = 1_000_000;
+
+        // Record a promotion
+        cooldown.record_promotion(id, now);
+
+        // Should not be able to evict within cooldown window
+        assert!(!cooldown.can_evict(&id, now + 1_000_000));
+        assert!(!cooldown.can_evict(&id, now + 4_000_000));
+
+        // After cooldown window, should be allowed
+        assert!(cooldown.can_evict(&id, now + 5_000_000));
+    }
+
+    #[test]
+    fn test_estimate_promotion_cost_disk_to_ram() {
+        let engine = test_engine();
+        let id = test_chunk_id(1);
+        let cost = engine.estimate_promotion_cost(&id, TierId::Disk, TierId::Ram, 4096);
+
+        // Disk → RAM should have non-zero latency (read + decompress + write)
+        assert!(cost.latency_ms > 0.0);
+        // Reliability should be high
+        assert!(cost.reliability > 0.0);
+    }
+
+    #[test]
+    fn test_estimate_promotion_cost_ram_to_disk() {
+        let engine = test_engine();
+        let id = test_chunk_id(1);
+        let cost = engine.estimate_promotion_cost(&id, TierId::Ram, TierId::Disk, 4096);
+
+        // RAM → Disk should have non-zero latency (compress + write + fsync)
+        assert!(cost.latency_ms > 0.0);
+        // Reliability should be high
+        assert!(cost.reliability > 0.0);
+    }
+
+    #[test]
+    fn test_estimate_promotion_cost_deterministic() {
+        let engine = test_engine();
+        let id = test_chunk_id(1);
+
+        // Same parameters should produce same cost (deterministic)
+        let cost1 = engine.estimate_promotion_cost(&id, TierId::Disk, TierId::Ram, 4096);
+        let cost2 = engine.estimate_promotion_cost(&id, TierId::Disk, TierId::Ram, 4096);
+
+        assert_eq!(cost1.latency_ms, cost2.latency_ms);
+        assert_eq!(cost1.bandwidth_bps, cost2.bandwidth_bps);
+        assert_eq!(cost1.reliability, cost2.reliability);
+    }
+
+    #[test]
+    fn test_mark_complete_records_promotion() {
+        let engine = test_engine();
+        let id = test_chunk_id(1);
+
+        engine.mark_active(id);
+        engine.mark_complete(id, 1024, true);
+
+        // After promotion, the cooldown should block eviction
+        let cooldown = engine.eviction_cooldown().lock().unwrap();
+        assert!(!cooldown.can_evict(&id, current_timestamp()));
     }
 }

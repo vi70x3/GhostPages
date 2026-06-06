@@ -18,6 +18,7 @@ tracing = { workspace = true }
 
 [features]
 deterministic = []
+runtime-invariants = []
 
 [dev-dependencies]
 proptest = { workspace = true }

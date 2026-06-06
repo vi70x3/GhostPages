@@ -210,6 +210,20 @@ impl StateMachine {
         })?;
         current.transition_to(next)?;
         self.states.insert(*chunk_id, next);
+
+        // Runtime invariant check: verify state machine consistency after transition.
+        // This is a lightweight self-check that runs only when the feature is enabled.
+        #[cfg(feature = "runtime-invariants")]
+        {
+            // Verify the state was actually updated
+            if self.states.get(chunk_id) != Some(&next) {
+                return Err(GhostError::Internal(format!(
+                    "State machine invariant violation: transition to {:?} did not persist",
+                    next
+                )));
+            }
+        }
+
         Ok(next)
     }
 

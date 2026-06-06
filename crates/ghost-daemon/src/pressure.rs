@@ -2,6 +2,7 @@
 //!
 //! Provides live pressure sampling from all backends, EMA smoothing,
 //! pressure trend detection, and a ring buffer of pressure history.
+//! Integrates disk I/O pressure from IoMetrics when available.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ use parking_lot::Mutex;
 use tokio::sync::watch;
 use tokio::time::interval;
 
+use crate::io_metrics::IoMetrics;
 use crate::trace_log::TraceLog;
 
 /// Pressure trend direction.
@@ -191,6 +193,12 @@ pub struct PressureMonitorConfig {
     pub smoothing_factor: f32,
     /// Threshold for pressure spike detection.
     pub pressure_spike_threshold: f32,
+    /// Maximum queue depth for disk I/O pressure calculation.
+    pub disk_max_queue: u64,
+    /// Maximum latency (microseconds) for disk I/O pressure calculation.
+    pub disk_max_latency_us: u64,
+    /// Weight for disk I/O pressure in the overall pressure calculation.
+    pub disk_pressure_weight: f32,
 }
 
 impl Default for PressureMonitorConfig {
@@ -199,6 +207,9 @@ impl Default for PressureMonitorConfig {
             sample_interval_ms: 1000,
             smoothing_factor: 0.3,
             pressure_spike_threshold: 0.1,
+            disk_max_queue: 256,
+            disk_max_latency_us: 10_000_000, // 10 seconds
+            disk_pressure_weight: 0.5,
         }
     }
 }
@@ -211,6 +222,10 @@ pub struct PressureMonitor {
     trace_log: Arc<TraceLog>,
     /// Optional event emitter for unified event taxonomy.
     event_emitter: Option<EventEmitter>,
+    /// Optional I/O metrics for disk pressure integration.
+    io_metrics: Option<Arc<IoMetrics>>,
+    /// Last calculated disk I/O pressure (0.0 to 1.0).
+    disk_io_pressure: Arc<Mutex<f32>>,
 }
 
 impl PressureMonitor {
@@ -226,12 +241,24 @@ impl PressureMonitor {
             smoothed: Arc::new(Mutex::new(PressureState::new())),
             trace_log,
             event_emitter: None,
+            io_metrics: None,
+            disk_io_pressure: Arc::new(Mutex::new(0.0)),
         }
     }
 
     /// Set the event emitter for unified event taxonomy.
     pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
         self.event_emitter = Some(emitter);
+    }
+
+    /// Set the I/O metrics for disk pressure integration.
+    pub fn set_io_metrics(&mut self, io_metrics: Arc<IoMetrics>) {
+        self.io_metrics = Some(io_metrics);
+    }
+
+    /// Get the current disk I/O pressure (0.0 to 1.0).
+    pub fn disk_io_pressure(&self) -> f32 {
+        *self.disk_io_pressure.lock()
     }
 
     /// Get a reference to the pressure history.
@@ -296,6 +323,26 @@ impl PressureMonitor {
             max_io = max_io.max(pressure.io_pressure);
             total_queue += pressure.queue_depth;
             total_throughput += pressure.throughput_bps;
+        }
+
+        // Calculate disk I/O pressure from IoMetrics if available
+        let disk_io_pressure = if let Some(ref io_metrics) = self.io_metrics {
+            let pressure = io_metrics.calculate_io_pressure(
+                self.config.disk_max_queue,
+                self.config.disk_max_latency_us,
+            );
+            // Update the stored disk I/O pressure
+            *self.disk_io_pressure.lock() = pressure;
+            pressure
+        } else {
+            0.0
+        };
+
+        // When disk I/O pressure is high, increase overall tier pressure.
+        // The disk pressure is blended into io_pressure with the configured weight.
+        if disk_io_pressure > 0.0 {
+            let weight = self.config.disk_pressure_weight;
+            max_io = max_io.max(disk_io_pressure * weight + max_io * (1.0 - weight));
         }
 
         let raw_global = PressureState {
@@ -606,6 +653,8 @@ mod tests {
         assert_eq!(config.sample_interval_ms, 1000);
         assert!((config.smoothing_factor - 0.3).abs() < 0.01);
         assert!((config.pressure_spike_threshold - 0.1).abs() < 0.01);
+        assert_eq!(config.disk_max_queue, 256);
+        assert_eq!(config.disk_max_latency_us, 10_000_000);
     }
 
     #[test]
@@ -614,6 +663,7 @@ mod tests {
         let config = PressureMonitorConfig::default();
         let monitor = PressureMonitor::new(config, 256, trace_log);
         assert!(monitor.history().lock().is_empty());
+        assert_eq!(monitor.disk_io_pressure(), 0.0);
     }
 
     #[test]
@@ -625,6 +675,7 @@ mod tests {
             sample_interval_ms: 100,
             smoothing_factor: 0.5,
             pressure_spike_threshold: 0.1,
+            ..Default::default()
         };
         let monitor = PressureMonitor::new(config, 256, trace_log.clone());
 
@@ -657,6 +708,7 @@ mod tests {
             sample_interval_ms: 100,
             smoothing_factor: 0.3,
             pressure_spike_threshold: 0.1,
+            ..Default::default()
         };
         let monitor = PressureMonitor::new(config, 256, trace_log);
 
@@ -725,6 +777,7 @@ mod tests {
             sample_interval_ms: 100,
             smoothing_factor: 0.5,
             pressure_spike_threshold: 0.1,
+            ..Default::default()
         };
         let monitor = PressureMonitor::new(config, 256, trace_log.clone());
 
@@ -759,5 +812,65 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, TraceEvent::PressureAlert { .. })));
         });
+    }
+
+    #[test]
+    fn test_disk_pressure_integration() {
+        use ghost_tier::RamBackend;
+
+        let trace_log = test_trace_log();
+        let config = PressureMonitorConfig::default();
+        let mut monitor = PressureMonitor::new(config, 256, trace_log.clone());
+
+        // Set up I/O metrics with high pressure
+        let io_metrics = Arc::new(IoMetrics::new());
+        // Simulate high queue depth: 200 out of 256 max
+        for _ in 0..200 {
+            io_metrics.increment_queue_depth();
+        }
+        // Simulate high latency
+        io_metrics.record_read(5_000_000); // 5 seconds
+
+        monitor.set_io_metrics(io_metrics.clone());
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+
+        rt.block_on(async {
+            let mut backends: BTreeMap<TierId, Arc<dyn StorageBackend>> = BTreeMap::new();
+            backends.insert(
+                TierId::Ram,
+                Arc::new(RamBackend::with_id(TierId::Ram, 1024 * 1024)),
+            );
+
+            // Sample — disk pressure should be factored in
+            monitor.sample_and_update(&backends, 0.5, 0.1).await;
+
+            // Disk I/O pressure should be non-zero
+            let disk_pressure = monitor.disk_io_pressure();
+            assert!(disk_pressure > 0.0, "disk pressure should be > 0, got {}", disk_pressure);
+
+            // The smoothed io_pressure should reflect the disk pressure
+            let smoothed = monitor.smoothed();
+            let guard = smoothed.lock();
+            assert!(guard.io_pressure > 0.0, "smoothed io_pressure should reflect disk pressure");
+        });
+    }
+
+    #[test]
+    fn test_disk_pressure_influences_overall_pressure() {
+        let trace_log = test_trace_log();
+        let config = PressureMonitorConfig::default();
+        let mut monitor = PressureMonitor::new(config, 256, trace_log);
+
+        // Without I/O metrics, disk pressure is 0
+        assert_eq!(monitor.disk_io_pressure(), 0.0);
+
+        // Set I/O metrics with zero pressure
+        let io_metrics = Arc::new(IoMetrics::new());
+        monitor.set_io_metrics(io_metrics);
+        assert_eq!(monitor.disk_io_pressure(), 0.0);
     }
 }

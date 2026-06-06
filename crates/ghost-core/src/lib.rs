@@ -16,11 +16,15 @@
 //! - [`EventEmitter`]: Typed event emission
 //! - [`EventMultiplexer`]: Fan-out event distribution
 //! - [`TracingHandler`]: Event → structured tracing spans
+//! - [`TransferDevice`]: Backend-neutral transfer device abstraction
+//! - [`DmaPipeline`]: DMA-oriented transfer pipeline
 
+pub mod dma_pipeline;
 pub mod emitter;
 pub mod error;
 pub mod event_multiplexer;
 pub mod events;
+pub mod hardware;
 pub mod hotness;
 pub mod invariant_registry;
 pub mod io_abstraction;

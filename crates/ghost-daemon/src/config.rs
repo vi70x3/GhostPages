@@ -85,6 +85,12 @@ pub struct SchedulerConfig {
 
     /// Whether to enable priority ordering (critical > high > normal > low).
     pub priority_ordering: bool,
+
+    /// Whether to enable disk-aware scheduling (defer migrations when disk is congested).
+    pub disk_aware_scheduling: bool,
+
+    /// Disk queue depth threshold above which migrations to disk are deferred.
+    pub disk_queue_threshold: u32,
 }
 
 impl Default for SchedulerConfig {
@@ -92,6 +98,8 @@ impl Default for SchedulerConfig {
         Self {
             max_concurrent_transfers: 8,
             priority_ordering: true,
+            disk_aware_scheduling: true,
+            disk_queue_threshold: 64,
         }
     }
 }
@@ -328,6 +336,15 @@ pub struct BackpressureConfig {
 
     /// Queue depth threshold above which backpressure escalates.
     pub queue_depth_threshold: u32,
+
+    /// Disk queue depth soft limit: above this, new stores to disk are throttled.
+    pub disk_queue_soft_limit: u32,
+
+    /// Disk queue depth hard limit: above this, new disk operations are rejected.
+    pub disk_queue_hard_limit: u32,
+
+    /// Disk latency threshold in microseconds: above this, migration rate to disk is reduced.
+    pub disk_latency_threshold_us: u64,
 }
 
 impl Default for BackpressureConfig {
@@ -342,6 +359,9 @@ impl Default for BackpressureConfig {
             io_pressure_soft_limit: 0.6,
             io_pressure_hard_limit: 0.85,
             queue_depth_threshold: 32,
+            disk_queue_soft_limit: 64,
+            disk_queue_hard_limit: 128,
+            disk_latency_threshold_us: 5_000_000, // 5 seconds
         }
     }
 }
@@ -369,6 +389,29 @@ impl Default for MetricsExporterConfig {
     }
 }
 
+/// Configuration for the transfer worker pool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferWorkerPoolConfig {
+    /// Number of worker tasks in the pool.
+    pub worker_count: usize,
+
+    /// Maximum number of pending tasks.
+    pub max_pending: usize,
+
+    /// Maximum number of completed tasks.
+    pub max_completed: usize,
+}
+
+impl Default for TransferWorkerPoolConfig {
+    fn default() -> Self {
+        Self {
+            worker_count: 2,
+            max_pending: 1024,
+            max_completed: 1024,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,6 +434,8 @@ mod tests {
         let config = SchedulerConfig::default();
         assert_eq!(config.max_concurrent_transfers, 8);
         assert!(config.priority_ordering);
+        assert!(config.disk_aware_scheduling);
+        assert_eq!(config.disk_queue_threshold, 64);
     }
 
     #[test]
@@ -460,5 +505,16 @@ mod tests {
         assert!((config.reject_threshold - 0.85).abs() < f32::EPSILON);
         assert!((config.critical_threshold - 0.95).abs() < f32::EPSILON);
         assert!(config.enabled);
+        assert_eq!(config.disk_queue_soft_limit, 64);
+        assert_eq!(config.disk_queue_hard_limit, 128);
+        assert_eq!(config.disk_latency_threshold_us, 5_000_000);
+    }
+
+    #[test]
+    fn test_transfer_worker_pool_config_default() {
+        let config = TransferWorkerPoolConfig::default();
+        assert_eq!(config.worker_count, 2);
+        assert_eq!(config.max_pending, 1024);
+        assert_eq!(config.max_completed, 1024);
     }
 }

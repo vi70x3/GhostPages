@@ -29,6 +29,7 @@ prometheus.workspace = true
 
 [features]
 deterministic = []
+runtime-invariants = ["ghost-core/runtime-invariants"]
 
 [dev-dependencies]
 tempfile.workspace = true

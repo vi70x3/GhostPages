@@ -5,6 +5,9 @@
 //! - **Throttle**: Reduce concurrency when pressure is elevated
 //! - **Reject**: Block non-critical transfers when pressure is high
 //! - **Critical-Only**: Only allow critical transfers when pressure is critical
+//!
+//! Integrates disk congestion awareness: when disk queue depth or latency
+//! exceeds thresholds, backpressure propagates to reduce demotions to disk.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -18,6 +21,7 @@ use ghost_core::transfer::TransferPriority;
 use ghost_core::types::TierId;
 
 use crate::config::BackpressureConfig;
+use crate::io_metrics::IoMetrics;
 use crate::trace_log::TraceLog;
 
 /// Current backpressure action to apply to incoming transfers.
@@ -83,10 +87,17 @@ pub struct BackpressureStats {
     pub last_action_change: u64,
     /// Current consecutive evaluations at the same action.
     pub consecutive_same_action: u64,
+    /// Number of evaluations where disk congestion escalated backpressure.
+    pub disk_congestion_escalations: u64,
 }
 
 /// Backpressure controller that monitors system pressure and adjusts transfer
 /// concurrency to prevent cascading failures under overload.
+///
+/// Integrates disk congestion awareness via IoMetrics: when disk queue depth
+/// or latency exceeds configured thresholds, backpressure escalates to reduce
+/// migrations to disk. This propagates: disk congestion → reduced demotions →
+/// RAM pressure may increase.
 pub struct BackpressureController {
     config: BackpressureConfig,
     trace_log: Arc<TraceLog>,
@@ -100,6 +111,8 @@ pub struct BackpressureController {
     last_evaluation: Arc<std::sync::Mutex<Instant>>,
     /// Timestamp when pressure last exceeded the throttle threshold.
     pressure_since: Arc<std::sync::Mutex<Option<Instant>>>,
+    /// Optional I/O metrics for disk congestion detection.
+    io_metrics: Option<Arc<IoMetrics>>,
 }
 
 impl BackpressureController {
@@ -113,6 +126,7 @@ impl BackpressureController {
             stats: Arc::new(std::sync::Mutex::new(BackpressureStats::default())),
             last_evaluation: Arc::new(std::sync::Mutex::new(Instant::now())),
             pressure_since: Arc::new(std::sync::Mutex::new(None)),
+            io_metrics: None,
         }
     }
 
@@ -121,15 +135,24 @@ impl BackpressureController {
         self.event_emitter = Some(emitter);
     }
 
+    /// Set the I/O metrics for disk congestion detection.
+    pub fn set_io_metrics(&mut self, io_metrics: Arc<IoMetrics>) {
+        self.io_metrics = Some(io_metrics);
+    }
+
     /// Evaluate the current pressure and determine the appropriate action.
     ///
     /// Considers both overall system pressure and I/O-specific pressure:
     /// - I/O pressure soft limit: throttles I/O-heavy operations
     /// - I/O pressure hard limit: rejects all non-critical transfers
     /// - Queue depth threshold: escalates backpressure when queue is deep
+    /// - Disk congestion: when disk queue/latency is high, escalates backpressure
     pub fn evaluate(&self, pressure: &PressureState) -> BackpressureAction {
         let max_pressure = pressure.max_pressure();
         let now = Instant::now();
+
+        // Disk congestion escalation: check IoMetrics for disk queue/latency
+        let disk_escalation = self.evaluate_disk_congestion();
 
         // I/O pressure-specific escalation:
         // If I/O pressure exceeds the hard limit or queue depth is very high,
@@ -146,7 +169,21 @@ impl BackpressureController {
             None
         };
 
-        let action = if let Some(io_action) = io_escalation {
+        // Combine disk escalation with IO escalation — pick the most restrictive
+        let combined_io_escalation = match (disk_escalation, io_escalation) {
+            (Some(disk), Some(io_action)) => {
+                if disk as u8 > io_action as u8 {
+                    Some(disk)
+                } else {
+                    Some(io_action)
+                }
+            }
+            (Some(disk), None) => Some(disk),
+            (None, Some(io_action)) => Some(io_action),
+            (None, None) => None,
+        };
+
+        let action = if let Some(io_action) = combined_io_escalation {
             // I/O escalation takes precedence when it's more severe than
             // what overall pressure would dictate
             let overall_action = if max_pressure >= self.config.critical_threshold {
@@ -219,6 +256,10 @@ impl BackpressureController {
             } else {
                 stats.consecutive_same_action += 1;
             }
+
+            if disk_escalation.is_some() && disk_escalation.unwrap() as u8 > BackpressureAction::Allow as u8 {
+                stats.disk_congestion_escalations += 1;
+            }
         }
 
         // Emit trace event on action change
@@ -257,6 +298,36 @@ impl BackpressureController {
         *self.last_evaluation.lock().unwrap() = now;
 
         action
+    }
+
+    /// Evaluate disk congestion from IoMetrics.
+    ///
+    /// Returns a backpressure escalation action if disk is congested:
+    /// - Soft limit: Throttle (when disk queue depth > soft threshold)
+    /// - Hard limit: Reject (when disk queue depth > hard threshold)
+    /// - Latency limit: Throttle (when disk latency > threshold)
+    fn evaluate_disk_congestion(&self) -> Option<BackpressureAction> {
+        let io_metrics = self.io_metrics.as_ref()?;
+
+        let queue_depth = io_metrics.get_queue_depth();
+        let rolling_latency = io_metrics.get_rolling_latency();
+
+        // Check hard limit first (most severe)
+        if queue_depth >= self.config.disk_queue_hard_limit as u64 {
+            return Some(BackpressureAction::Reject);
+        }
+
+        // Check soft limit
+        let soft_triggered = queue_depth >= self.config.disk_queue_soft_limit as u64;
+
+        // Check latency threshold
+        let latency_triggered = rolling_latency >= self.config.disk_latency_threshold_us;
+
+        if soft_triggered || latency_triggered {
+            return Some(BackpressureAction::Throttle);
+        }
+
+        None
     }
 
     /// Check if a transfer with the given priority should be allowed.
@@ -468,5 +539,91 @@ mod tests {
         assert!((config.reject_threshold - 0.85).abs() < f32::EPSILON);
         assert!((config.critical_threshold - 0.95).abs() < f32::EPSILON);
         assert!(config.enabled);
+    }
+
+    #[test]
+    fn test_disk_congestion_soft_limit_triggers_throttle() {
+        let config = BackpressureConfig::default();
+        let mut controller = BackpressureController::new(config, test_trace_log());
+
+        // Set up I/O metrics with queue depth above soft limit
+        let io_metrics = Arc::new(IoMetrics::new());
+        for _ in 0..70 {
+            // Above soft limit of 64
+            io_metrics.increment_queue_depth();
+        }
+        controller.set_io_metrics(io_metrics);
+
+        // With zero system pressure, disk congestion should still trigger throttle
+        let pressure = PressureState::new();
+        let action = controller.evaluate(&pressure);
+        assert_eq!(action, BackpressureAction::Throttle);
+
+        let stats = controller.stats();
+        assert_eq!(stats.disk_congestion_escalations, 1);
+    }
+
+    #[test]
+    fn test_disk_congestion_hard_limit_triggers_reject() {
+        let config = BackpressureConfig::default();
+        let mut controller = BackpressureController::new(config, test_trace_log());
+
+        // Set up I/O metrics with queue depth above hard limit
+        let io_metrics = Arc::new(IoMetrics::new());
+        for _ in 0..130 {
+            // Above hard limit of 128
+            io_metrics.increment_queue_depth();
+        }
+        controller.set_io_metrics(io_metrics);
+
+        let pressure = PressureState::new();
+        let action = controller.evaluate(&pressure);
+        assert_eq!(action, BackpressureAction::Reject);
+    }
+
+    #[test]
+    fn test_disk_congestion_latency_triggers_throttle() {
+        let config = BackpressureConfig::default();
+        let mut controller = BackpressureController::new(config, test_trace_log());
+
+        // Set up I/O metrics with high latency
+        let io_metrics = Arc::new(IoMetrics::new());
+        // Record a read with latency above threshold (5 seconds)
+        io_metrics.record_read(6_000_000); // 6 seconds in microseconds
+        controller.set_io_metrics(io_metrics);
+
+        let pressure = PressureState::new();
+        let action = controller.evaluate(&pressure);
+        assert_eq!(action, BackpressureAction::Throttle);
+    }
+
+    #[test]
+    fn test_disk_congestion_no_metrics_no_escalation() {
+        let config = BackpressureConfig::default();
+        let controller = BackpressureController::new(config, test_trace_log());
+
+        // No I/O metrics set — disk congestion should not trigger
+        let pressure = PressureState::new();
+        let action = controller.evaluate(&pressure);
+        assert_eq!(action, BackpressureAction::Allow);
+    }
+
+    #[test]
+    fn test_disk_congestion_below_thresholds_no_escalation() {
+        let config = BackpressureConfig::default();
+        let mut controller = BackpressureController::new(config, test_trace_log());
+
+        // Set up I/O metrics with low queue depth and latency
+        let io_metrics = Arc::new(IoMetrics::new());
+        io_metrics.increment_queue_depth(); // Only 1, well below soft limit of 64
+        io_metrics.record_read(100); // 100 microseconds, well below threshold
+        controller.set_io_metrics(io_metrics);
+
+        let pressure = PressureState::new();
+        let action = controller.evaluate(&pressure);
+        assert_eq!(action, BackpressureAction::Allow);
+
+        let stats = controller.stats();
+        assert_eq!(stats.disk_congestion_escalations, 0);
     }
 }

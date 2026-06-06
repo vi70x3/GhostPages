@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::emitter::EventEmitter;
+use crate::error::GhostResult;
 pub use crate::io_events::IoOperation;
 use crate::io_events::IoEvent;
 use crate::time::TimeProvider;
@@ -101,6 +102,9 @@ pub struct IoScheduler {
     /// Completed I/O requests (for replay and auditing).
     completed: Vec<IoRequest>,
 
+    /// Maximum number of in-flight I/O requests before backpressure.
+    max_pending: usize,
+
     /// Time provider for deterministic or real timing.
     time_provider: Arc<dyn TimeProvider>,
 
@@ -115,14 +119,17 @@ impl IoScheduler {
     ///
     /// * `time_provider` — Provides deterministic or real time.
     /// * `event_emitter` — Emits `IoEvent` variants to the event system.
+    /// * `max_pending` — Maximum number of in-flight I/O requests before backpressure.
     pub fn new(
         time_provider: Arc<dyn TimeProvider>,
         event_emitter: EventEmitter,
+        max_pending: usize,
     ) -> Self {
         Self {
             next_id: AtomicU64::new(1),
             pending: BTreeMap::new(),
             completed: Vec::new(),
+            max_pending,
             time_provider,
             event_emitter,
         }
@@ -132,6 +139,9 @@ impl IoScheduler {
     ///
     /// Returns the unique request ID that can later be passed to `complete()`.
     /// Emits `IoRequestIssued` synchronously.
+    ///
+    /// Returns `Err` if the scheduler has reached its `max_pending` capacity
+    /// (backpressure).
     ///
     /// # Arguments
     ///
@@ -143,7 +153,16 @@ impl IoScheduler {
         operation: IoOperation,
         chunk_id: ChunkId,
         tier: TierId,
-    ) -> u64 {
+    ) -> GhostResult<u64> {
+        // Backpressure: reject new I/O when at capacity.
+        if self.pending.len() >= self.max_pending {
+            return Err(crate::error::GhostError::Internal(format!(
+                "I/O scheduler at capacity: {} pending requests (max: {})",
+                self.pending.len(),
+                self.max_pending
+            )));
+        }
+
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let now = self.time_provider.now();
 
@@ -181,7 +200,7 @@ impl IoScheduler {
             (*pending).insert(id, request);
         }
 
-        id
+        Ok(id)
     }
 
     /// Resolve a pending I/O request — called when the actual I/O finishes.
@@ -256,6 +275,16 @@ impl IoScheduler {
     /// Get the number of pending (in-flight) I/O requests.
     pub fn pending_count(&self) -> usize {
         self.pending.len()
+    }
+
+    /// Get the maximum number of pending I/O requests (backpressure limit).
+    pub fn max_pending(&self) -> usize {
+        self.max_pending
+    }
+
+    /// Check whether the scheduler is at capacity (backpressure active).
+    pub fn is_at_capacity(&self) -> bool {
+        self.pending.len() >= self.max_pending
     }
 
     /// Get the number of completed I/O requests.
@@ -386,15 +415,15 @@ mod tests {
         let (tx, rx) = mpsc::channel(256);
         let emitter = EventEmitter::new(tx);
         let clock = DeterministicTimeProvider::new(1_700_000_000, Duration::from_millis(1));
-        let scheduler = IoScheduler::new(Arc::new(clock), emitter);
+        let scheduler = IoScheduler::new(Arc::new(clock), emitter, 64);
         (scheduler, rx)
     }
 
     #[test]
     fn test_issue_returns_incrementing_ids() {
         let (scheduler, _rx) = test_scheduler();
-        let id1 = scheduler.issue(IoOperation::Read, ChunkId::from_data(b"a"), TierId::Ram);
-        let id2 = scheduler.issue(IoOperation::Write, ChunkId::from_data(b"b"), TierId::Disk);
+        let id1 = scheduler.issue(IoOperation::Read, ChunkId::from_data(b"a"), TierId::Ram).unwrap();
+        let id2 = scheduler.issue(IoOperation::Write, ChunkId::from_data(b"b"), TierId::Disk).unwrap();
         assert!(id1 < id2);
         assert_eq!(scheduler.pending_count(), 2);
     }
@@ -402,7 +431,7 @@ mod tests {
     #[test]
     fn test_complete_moves_to_completed() {
         let (mut scheduler, _rx) = test_scheduler();
-        let id = scheduler.issue(IoOperation::Read, ChunkId::from_data(b"a"), TierId::Ram);
+        let id = scheduler.issue(IoOperation::Read, ChunkId::from_data(b"a"), TierId::Ram).unwrap();
         assert_eq!(scheduler.pending_count(), 1);
         assert_eq!(scheduler.completed_count(), 0);
 
@@ -414,7 +443,7 @@ mod tests {
     #[test]
     fn test_complete_with_error() {
         let (mut scheduler, _rx) = test_scheduler();
-        let id = scheduler.issue(IoOperation::Write, ChunkId::from_data(b"a"), TierId::Disk);
+        let id = scheduler.issue(IoOperation::Write, ChunkId::from_data(b"a"), TierId::Disk).unwrap();
         scheduler.complete(id, Err("device failure".to_string()));
 
         let completed = scheduler.completed();
@@ -455,5 +484,46 @@ mod tests {
         scheduler.flush();
         assert_eq!(scheduler.pending_count(), 0);
         assert_eq!(scheduler.completed_count(), 0);
+    }
+
+    #[test]
+    fn test_backpressure_at_capacity() {
+        let (tx, _rx) = mpsc::channel(256);
+        let emitter = EventEmitter::new(tx);
+        let clock = DeterministicTimeProvider::new(1_700_000_000, Duration::from_millis(1));
+        let scheduler = IoScheduler::new(Arc::new(clock), emitter, 4);
+        assert_eq!(scheduler.max_pending(), 4);
+        assert!(!scheduler.is_at_capacity());
+
+        // Fill to capacity
+        for i in 0..4 {
+            scheduler
+                .issue(
+                    IoOperation::Read,
+                    ChunkId::from_data(format!("chunk-{}", i).as_bytes()),
+                    TierId::Ram,
+                )
+                .unwrap();
+        }
+        assert!(scheduler.is_at_capacity());
+        assert_eq!(scheduler.pending_count(), 4);
+
+        // Fifth issue should fail with backpressure
+        let result = scheduler.issue(
+            IoOperation::Read,
+            ChunkId::from_data(b"overflow"),
+            TierId::Ram,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_capacity_accessors() {
+        let (tx, _rx) = mpsc::channel(256);
+        let emitter = EventEmitter::new(tx);
+        let clock = DeterministicTimeProvider::new(1_700_000_000, Duration::from_millis(1));
+        let scheduler = IoScheduler::new(Arc::new(clock), emitter, 32);
+        assert_eq!(scheduler.max_pending(), 32);
+        assert!(!scheduler.is_at_capacity());
     }
 }

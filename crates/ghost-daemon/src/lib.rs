@@ -54,17 +54,25 @@ pub mod migration;
 /// Backpressure controller for overload management.
 pub mod backpressure;
 
+/// I/O metrics tracking for disk performance and congestion.
+pub mod io_metrics;
+
 /// Diagnostic snapshot and builder.
 pub mod diagnostics;
 
 /// Prometheus metrics HTTP exporter.
 pub mod exporter;
 
-pub use config::{BackpressureConfig, HealthConfig, MetricsExporterConfig, MigrationConfig, OrchestratorConfig, RetryConfig};
+/// Transfer worker pool for dedicated transfer operations.
+pub mod transfer_worker;
+
+pub use config::{BackpressureConfig, HealthConfig, MetricsExporterConfig, MigrationConfig, OrchestratorConfig, RetryConfig, TransferWorkerPoolConfig};
 pub use engine::Engine;
 pub use health::{BackendHealth, HealthTracker};
+pub use io_metrics::IoMetrics;
 pub use ipc_server::{IpcServer, IpcServerConfig};
 pub use migration::{MigrationEngine, MigrationStats, PendingMigration};
 pub use orchestrator::TransferOrchestrator;
 pub use pipeline::Pipeline;
 pub use retry::RetryConfig as RetryConfigType;
+pub use transfer_worker::{TransferCompletion, TransferTask, TransferWorkerPool};

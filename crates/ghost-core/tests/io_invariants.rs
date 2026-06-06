@@ -34,14 +34,14 @@ fn make_scheduler() -> IoScheduler {
     let (tx, _rx) = mpsc::channel(256);
     let emitter = ghost_core::emitter::EventEmitter::new(tx);
     let clock = DeterministicTimeProvider::new(1_700_000_000, Duration::from_millis(1));
-    IoScheduler::new(Arc::new(clock), emitter)
+    IoScheduler::new(Arc::new(clock), emitter, 256)
 }
 
 fn make_scheduler_with_channel() -> (IoScheduler, mpsc::Receiver<ghost_core::events::Event>) {
     let (tx, rx) = mpsc::channel(256);
     let emitter = ghost_core::emitter::EventEmitter::new(tx);
     let clock = DeterministicTimeProvider::new(1_700_000_000, Duration::from_millis(1));
-    let scheduler = IoScheduler::new(Arc::new(clock), emitter);
+    let scheduler = IoScheduler::new(Arc::new(clock), emitter, 64);
     (scheduler, rx)
 }
 
@@ -51,7 +51,7 @@ fn make_scheduler_with_channel() -> (IoScheduler, mpsc::Receiver<ghost_core::eve
 fn test_invariant_no_double_complete() {
     let mut scheduler = make_scheduler();
     let chunk = ChunkId::from_data(b"test-chunk");
-    let id = scheduler.issue(IoOperation::Read, chunk, TierId::Ram);
+    let id = scheduler.issue(IoOperation::Read, chunk, TierId::Ram).unwrap();
 
     // First complete should succeed
     scheduler.complete(id, Ok(()));
@@ -87,7 +87,7 @@ fn test_invariant_flush_resolves_all_pending() {
                 },
                 chunk,
                 tier,
-            )
+            ).unwrap()
         })
         .collect();
 
@@ -119,9 +119,9 @@ fn test_invariant_pending_count_consistency() {
     let tier = TierId::Ram;
 
     // Issue 3
-    let id1 = scheduler.issue(IoOperation::Read, chunk, tier);
-    let id2 = scheduler.issue(IoOperation::Write, chunk, tier);
-    let id3 = scheduler.issue(IoOperation::Delete, chunk, tier);
+    let id1 = scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
+    let id2 = scheduler.issue(IoOperation::Write, chunk, tier).unwrap();
+    let id3 = scheduler.issue(IoOperation::Delete, chunk, tier).unwrap();
 
     assert_eq!(scheduler.pending_count(), 3);
     assert_eq!(scheduler.pending().len(), 3);
@@ -149,7 +149,7 @@ fn test_invariant_request_ids_monotonic() {
 
     let mut prev_id = 0u64;
     for _ in 0..100 {
-        let id = scheduler.issue(IoOperation::Read, chunk, tier);
+        let id = scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
         assert!(id > prev_id, "ID {} must be greater than previous {}", id, prev_id);
         prev_id = id;
     }
@@ -166,13 +166,13 @@ fn test_invariant_issue_after_flush() {
     let tier = TierId::Disk;
 
     // Issue and flush
-    scheduler.issue(IoOperation::Read, chunk, tier);
-    scheduler.issue(IoOperation::Write, chunk, tier);
+    scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
+    scheduler.issue(IoOperation::Write, chunk, tier).unwrap();
     scheduler.flush();
     assert_eq!(scheduler.completed_count(), 2);
 
     // Issue new requests after flush
-    let id = scheduler.issue(IoOperation::Read, chunk, tier);
+    let id = scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
     assert_eq!(scheduler.pending_count(), 1);
     scheduler.complete(id, Ok(()));
     assert_eq!(scheduler.completed_count(), 3);
@@ -199,7 +199,7 @@ fn test_invariant_failed_completion_recorded() {
     let chunk = ChunkId::from_data(b"test-chunk");
     let tier = TierId::Disk;
 
-    let id = scheduler.issue(IoOperation::Write, chunk, tier);
+    let id = scheduler.issue(IoOperation::Write, chunk, tier).unwrap();
     scheduler.complete(id, Err("disk failure".to_string()));
 
     assert_eq!(scheduler.completed_count(), 1);
@@ -217,9 +217,9 @@ fn test_invariant_mixed_success_failure() {
     let chunk = ChunkId::from_data(b"test-chunk");
     let tier = TierId::Ram;
 
-    let id1 = scheduler.issue(IoOperation::Read, chunk, tier);
-    let id2 = scheduler.issue(IoOperation::Write, chunk, tier);
-    let id3 = scheduler.issue(IoOperation::Delete, chunk, tier);
+    let id1 = scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
+    let id2 = scheduler.issue(IoOperation::Write, chunk, tier).unwrap();
+    let id3 = scheduler.issue(IoOperation::Delete, chunk, tier).unwrap();
 
     scheduler.complete(id1, Ok(()));
     scheduler.complete(id2, Err("write error".to_string()));
@@ -249,7 +249,7 @@ fn test_invariant_events_emitted_for_io_lifecycle() {
     let tier = TierId::Disk;
 
     // Issue should emit IoRequestIssued
-    let id = scheduler.issue(IoOperation::Read, chunk, tier);
+    let id = scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
     let event = rx.try_recv().expect("should receive IoRequestIssued");
     match event {
         ghost_core::events::Event::IoRequestIssued {
@@ -297,8 +297,8 @@ fn test_invariant_flush_emits_events() {
     let chunk = ChunkId::from_data(b"test-chunk");
     let tier = TierId::Ram;
 
-    scheduler.issue(IoOperation::Read, chunk, tier);
-    scheduler.issue(IoOperation::Write, chunk, tier);
+    scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
+    scheduler.issue(IoOperation::Write, chunk, tier).unwrap();
 
     // Drain the IoRequestIssued events from the two issue() calls
     let event = rx.try_recv().expect("should receive first IoRequestIssued");
@@ -371,8 +371,8 @@ fn test_ghost_io_no_double_complete_happy() {
     let chunk = ChunkId::from_data(b"test-chunk");
     let tier = TierId::Ram;
 
-    let id1 = scheduler.issue(IoOperation::Read, chunk, tier);
-    let id2 = scheduler.issue(IoOperation::Write, chunk, tier);
+    let id1 = scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
+    let id2 = scheduler.issue(IoOperation::Write, chunk, tier).unwrap();
 
     let state = make_ghost_state(&scheduler);
     assert!(io_no_double_complete(&state).is_ok(), "no overlap when nothing completed");
@@ -392,7 +392,7 @@ fn test_ghost_io_no_double_complete_violation() {
     let chunk = ChunkId::from_data(b"test-chunk");
     let tier = TierId::Ram;
 
-    let id = scheduler.issue(IoOperation::Read, chunk, tier);
+    let id = scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
 
     // Simulate a state where the same request is both pending and completed
     // (this would be a bug in the scheduler or event replay).
@@ -430,7 +430,7 @@ fn test_ghost_io_flush_completeness_happy() {
 
     // Issue some requests
     for _ in 0..3 {
-        scheduler.issue(IoOperation::Read, chunk, tier);
+        scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
     }
 
     let state = make_ghost_state(&scheduler);
@@ -451,7 +451,7 @@ fn test_ghost_io_flush_completeness_violation() {
     let chunk = ChunkId::from_data(b"test-chunk");
     let tier = TierId::Ram;
 
-    let _id = scheduler.issue(IoOperation::Read, chunk, tier);
+    let _id = scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
 
     // Create a state where pending is non-empty but io_in_flight is 0
     let pending = scheduler.pending().clone();
@@ -477,7 +477,7 @@ fn test_ghost_io_completion_bounded_happy() {
     let tier = TierId::Ram;
 
     for _ in 0..5 {
-        scheduler.issue(IoOperation::Read, chunk, tier);
+        scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
     }
 
     let state = make_ghost_state(&scheduler);
@@ -491,7 +491,7 @@ fn test_ghost_io_completion_bounded_violation() {
     let chunk = ChunkId::from_data(b"test-chunk");
     let tier = TierId::Ram;
 
-    let _id = scheduler.issue(IoOperation::Read, chunk, tier);
+    let _id = scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
 
     // Create a state with mismatch between io_in_flight and pending.len()
     let pending = scheduler.pending().clone();
@@ -517,7 +517,7 @@ fn test_ghost_io_buffer_within_capacity_happy() {
     let tier = TierId::Ram;
 
     for _ in 0..100 {
-        scheduler.issue(IoOperation::Read, chunk, tier);
+        scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
     }
 
     let state = make_ghost_state(&scheduler);
@@ -532,14 +532,14 @@ fn test_ghost_io_request_id_monotonic_happy() {
     let tier = TierId::Ram;
 
     // Issue and complete some requests
-    let id1 = scheduler.issue(IoOperation::Read, chunk, tier);
-    let id2 = scheduler.issue(IoOperation::Write, chunk, tier);
+    let id1 = scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
+    let id2 = scheduler.issue(IoOperation::Write, chunk, tier).unwrap();
     scheduler.complete(id1, Ok(()));
     scheduler.complete(id2, Ok(()));
 
     // Issue new requests (IDs will be higher)
-    let _id3 = scheduler.issue(IoOperation::Read, chunk, tier);
-    let _id4 = scheduler.issue(IoOperation::Write, chunk, tier);
+    let _id3 = scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
+    let _id4 = scheduler.issue(IoOperation::Write, chunk, tier).unwrap();
 
     let state = make_ghost_state(&scheduler);
     assert!(io_request_id_monotonic(&state).is_ok(), "pending IDs > completed IDs");
@@ -554,7 +554,7 @@ fn test_ghost_io_failure_eventual_happy() {
 
     // Issue and complete a mix of success and failure
     for i in 0..10 {
-        let id = scheduler.issue(IoOperation::Write, chunk, tier);
+        let id = scheduler.issue(IoOperation::Write, chunk, tier).unwrap();
         if i % 3 == 0 {
             scheduler.complete(id, Err("transient error".to_string()));
         } else {
@@ -628,13 +628,13 @@ fn test_io_invariants_cross_mode() {
     for (mode_name, clock) in &configs {
         let (tx, _rx) = mpsc::channel(256);
         let emitter = ghost_core::emitter::EventEmitter::new(tx);
-        let mut scheduler = IoScheduler::new(clock.clone(), emitter);
+        let mut scheduler = IoScheduler::new(clock.clone(), emitter, 64);
 
         // Phase 1: Issue 10 requests — all invariants must hold
         let ids: Vec<u64> = (0..10)
             .map(|i| {
                 let op = if i % 2 == 0 { IoOperation::Read } else { IoOperation::Write };
-                scheduler.issue(op, chunk, tier)
+                scheduler.issue(op, chunk, tier).unwrap()
             })
             .collect();
 

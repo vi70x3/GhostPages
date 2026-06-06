@@ -9,11 +9,13 @@ use std::time::{Duration, Instant};
 
 use ghost_core::emitter::EventEmitter;
 use ghost_core::error::{GhostError, GhostResult};
-use ghost_core::events::Event;
+use ghost_core::events::{BackendHealth as CoreBackendHealth, Event};
+use ghost_core::invariant_registry::{GhostState, InvariantRegistry, TransferQueue as InvariantTransferQueue};
+use ghost_core::io_abstraction::IoRequest;
 use ghost_core::state::{ChunkState, PressureState, StateMachine};
 use ghost_core::trace::{current_timestamp, TraceEvent};
 use ghost_core::transfer::{TransferJob, TransferPriority};
-use ghost_core::types::{ChunkId, TierId};
+use ghost_core::types::{ChunkId, ChunkMeta, TierId};
 use ghost_policy::PlacementPolicy;
 use ghost_tier::StorageBackend;
 
@@ -62,6 +64,8 @@ pub struct TransferOrchestrator {
     start_time: Instant,
     /// Optional event emitter for unified event taxonomy.
     event_emitter: Option<EventEmitter>,
+    /// Runtime invariant registry for post-mutation validation.
+    invariant_registry: Arc<std::sync::Mutex<InvariantRegistry>>,
 }
 
 impl TransferOrchestrator {
@@ -75,6 +79,7 @@ impl TransferOrchestrator {
         let queue = Arc::new(TransferQueue::new(config.queue_capacity, trace_log.clone()));
         let state_machine = Arc::new(std::sync::Mutex::new(StateMachine::new()));
         let metrics = Arc::new(TransferMetrics::new());
+        let invariant_registry = Arc::new(std::sync::Mutex::new(InvariantRegistry::new()));
 
         // Create health tracker and register all backends
         let mut health_tracker = HealthTracker::new(crate::health::HealthConfig::default());
@@ -89,6 +94,8 @@ impl TransferOrchestrator {
         let scheduler_config = SchedulerConfig {
             max_concurrent_transfers: config.worker_count,
             priority_ordering: true,
+            disk_aware_scheduling: true,
+            disk_queue_threshold: 64,
         };
 
         let worker_config = WorkerPoolConfig {
@@ -105,6 +112,9 @@ impl TransferOrchestrator {
             sample_interval_ms: config.pressure_sample_interval_ms,
             smoothing_factor: config.pressure_smoothing_factor,
             pressure_spike_threshold: 0.1,
+            disk_max_queue: 256,
+            disk_max_latency_us: 10_000_000,
+            disk_pressure_weight: 0.5,
         };
         let pressure_monitor = PressureMonitor::new(
             pressure_monitor_config,
@@ -155,6 +165,7 @@ impl TransferOrchestrator {
             backpressure_controller,
             start_time: Instant::now(),
             event_emitter: None,
+            invariant_registry,
         }
     }
 
@@ -386,6 +397,9 @@ impl TransferOrchestrator {
             }
         }
 
+        // Runtime invariant check: verify state machine consistency after store
+        self.check_invariants("store", chunk_id)?;
+
         self.trace_log.record(TraceEvent::ChunkCreated {
             chunk_id,
             size: data.len(),
@@ -435,6 +449,9 @@ impl TransferOrchestrator {
                 }
             }
         }
+
+        // Runtime invariant check: verify state machine consistency after retrieve
+        self.check_invariants("retrieve", chunk_id)?;
 
         // For retrieve, we use a same-tier transfer
         // Emit Retrieve event
@@ -487,6 +504,9 @@ impl TransferOrchestrator {
                 }
             }
         }
+        // Runtime invariant check: verify state machine consistency after migrate
+        self.check_invariants("migrate", chunk_id)?;
+
 
         let priority = if size > 1024 * 1024 {
             // Large transfers get lower priority to avoid blocking small ones
@@ -541,6 +561,9 @@ impl TransferOrchestrator {
                     return Err(GhostError::ChunkNotFound(format!("{:?}", chunk_id)));
                 }
             }
+        // Runtime invariant check: verify state machine consistency after evict
+        self.check_invariants("evict", chunk_id)?;
+
         }
 
         self.trace_log.record(TraceEvent::ChunkStateChanged {
@@ -879,6 +902,65 @@ impl TransferOrchestrator {
             timestamp: current_timestamp(),
         });
         self.queue.submit(job)
+    }
+
+    /// Check invariants after a state-mutation operation.
+    ///
+    /// This method is called after store/retrieve/migrate/evict to verify
+    /// that the state machine remains consistent. When the `runtime-invariants`
+    /// feature is enabled, it runs all registered invariant checks via
+    /// [`InvariantRegistry::check_all`].
+    #[cfg(feature = "runtime-invariants")]
+    fn check_invariants(&self, operation: &str, chunk_id: ChunkId) -> GhostResult<()> {
+        // Build a GhostState snapshot from the orchestrator's live state.
+        // This allows the invariant registry to validate cross-cutting concerns
+        // (no orphaned transfers, no illegal transitions, I/O consistency, etc.)
+        let sm = self.state_machine.lock().unwrap();
+        let chunks = sm.snapshot();
+        drop(sm);
+
+        let pressure = self.current_pressure();
+        let health = self.health_tracker.overall_health();
+        let queue = InvariantTransferQueue;
+        let io_pending = self.io_pending_snapshot();
+        let io_completed: Vec<ghost_core::io_abstraction::IoRequest> = Vec::new();
+        let io_in_flight = io_pending.len();
+
+        let ghost_state = GhostState {
+            chunks: &chunks,
+            transfer_queue: &queue,
+            health: &health,
+            pressure: &pressure,
+            io_pending: &io_pending,
+            io_completed: &io_completed,
+            io_in_flight,
+        };
+
+        // Run all registered invariant checks
+        let registry = self.invariant_registry.lock().unwrap();
+        registry.check_all(&ghost_state).map_err(|e| {
+            tracing::error!(
+                "Invariant violation after {} for chunk {:?}: {}",
+                operation,
+                chunk_id,
+                e
+            );
+            e
+        })?;
+
+        tracing::debug!(
+            "Invariant check passed after {} for chunk {:?}",
+            operation,
+            chunk_id
+        );
+
+        Ok(())
+    }
+
+    /// Stub for when runtime-invariants feature is disabled.
+    #[cfg(not(feature = "runtime-invariants"))]
+    fn check_invariants(&self, _operation: &str, _chunk_id: ChunkId) -> GhostResult<()> {
+        Ok(())
     }
 }
 

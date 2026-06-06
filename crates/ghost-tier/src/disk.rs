@@ -215,7 +215,7 @@ impl DiskBackend {
         let time_provider: Arc<dyn TimeProvider> =
             Arc::new(ghost_core::time::RealTimeProvider);
 
-        let io_scheduler = IoScheduler::new(time_provider.clone(), event_emitter.clone());
+        let io_scheduler = IoScheduler::new(time_provider.clone(), event_emitter.clone(), 64);
 
         let capacity = config.capacity;
         Ok(Self {
@@ -262,7 +262,7 @@ impl DiskBackend {
             })?;
         }
 
-        let io_scheduler = IoScheduler::new(time_provider.clone(), event_emitter.clone());
+        let io_scheduler = IoScheduler::new(time_provider.clone(), event_emitter.clone(), 64);
 
         let capacity = config.capacity;
         Ok(Self {
@@ -632,7 +632,7 @@ impl StorageBackend for DiskBackend {
         let chunk_id = disk_alloc.chunk_id;
         {
             let mut scheduler = self.io_scheduler.lock();
-            scheduler.issue(IoOperation::Write, chunk_id, TierId::Disk);
+            let _req_id = scheduler.issue(IoOperation::Write, chunk_id, TierId::Disk).map_err(|e| BackendError::Internal(e.to_string()))?;
         }
 
         // Increment queue depth
@@ -742,7 +742,7 @@ impl StorageBackend for DiskBackend {
         // Issue I/O request
         {
             let mut scheduler = self.io_scheduler.lock();
-            scheduler.issue(IoOperation::Read, chunk_id, TierId::Disk);
+            let _req_id = scheduler.issue(IoOperation::Read, chunk_id, TierId::Disk).map_err(|e| BackendError::Internal(e.to_string()))?;
         }
 
         self.queue_depth.fetch_add(1, Ordering::SeqCst);

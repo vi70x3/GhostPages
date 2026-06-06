@@ -21,7 +21,7 @@ fn make_scheduler(
     let (tx, rx) = mpsc::channel(256);
     let emitter = EventEmitter::new(tx);
     let clock = DeterministicTimeProvider::new(start_secs, Duration::from_millis(1));
-    let scheduler = IoScheduler::new(Arc::new(clock), emitter);
+    let scheduler = IoScheduler::new(Arc::new(clock), emitter, 64);
     (scheduler, rx)
 }
 
@@ -34,9 +34,9 @@ fn run_sequence(scheduler: &mut IoScheduler) -> Vec<(u64, IoOperation, u64)> {
     let tier = TierId::Disk;
 
     // Issue three reads
-    let id1 = scheduler.issue(IoOperation::Read, chunk_a, tier);
-    let id2 = scheduler.issue(IoOperation::Read, chunk_b, tier);
-    let id3 = scheduler.issue(IoOperation::Read, chunk_c, tier);
+    let id1 = scheduler.issue(IoOperation::Read, chunk_a, tier).unwrap();
+    let id2 = scheduler.issue(IoOperation::Read, chunk_b, tier).unwrap();
+    let id3 = scheduler.issue(IoOperation::Read, chunk_c, tier).unwrap();
 
     // Complete them in reverse order (simulating out-of-order completion)
     scheduler.complete(id2, Ok(()));
@@ -44,7 +44,7 @@ fn run_sequence(scheduler: &mut IoScheduler) -> Vec<(u64, IoOperation, u64)> {
     scheduler.complete(id1, Ok(()));
 
     // Issue a write, then flush
-    let id4 = scheduler.issue(IoOperation::Write, chunk_a, tier);
+    let id4 = scheduler.issue(IoOperation::Write, chunk_a, tier).unwrap();
     scheduler.complete(id4, Ok(()));
 
     // Collect results from completed requests
@@ -98,9 +98,9 @@ fn test_io_determinism_issue_order_is_monotonic() {
     let chunk = ChunkId::from_data(b"test-chunk");
     let tier = TierId::Ram;
 
-    let id1 = scheduler.issue(IoOperation::Read, chunk, tier);
-    let id2 = scheduler.issue(IoOperation::Write, chunk, tier);
-    let id3 = scheduler.issue(IoOperation::Delete, chunk, tier);
+    let id1 = scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
+    let id2 = scheduler.issue(IoOperation::Write, chunk, tier).unwrap();
+    let id3 = scheduler.issue(IoOperation::Delete, chunk, tier).unwrap();
 
     assert!(id1 < id2, "IDs must be monotonically increasing");
     assert!(id2 < id3, "IDs must be monotonically increasing");
@@ -114,7 +114,7 @@ fn test_io_determinism_flush_resolves_all_pending() {
 
     // Issue several operations without completing
     for _ in 0..10 {
-        scheduler.issue(IoOperation::Read, chunk, tier);
+        scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
     }
     assert_eq!(scheduler.pending_count(), 10);
 
@@ -138,7 +138,7 @@ fn test_io_determinism_multiple_flushes_are_idempotent() {
     let chunk = ChunkId::from_data(b"test-chunk");
     let tier = TierId::Ram;
 
-    scheduler.issue(IoOperation::Read, chunk, tier);
+    scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
     scheduler.issue(IoOperation::Write, chunk, tier);
 
     // First flush
@@ -157,13 +157,13 @@ fn test_io_determinism_issue_complete_roundtrip_with_clock_advance() {
     let clock = DeterministicTimeProvider::new(1_700_000_000, Duration::from_millis(1));
     let (tx, _rx) = mpsc::channel(256);
     let emitter = EventEmitter::new(tx);
-    let mut scheduler = IoScheduler::new(Arc::new(clock), emitter);
+    let mut scheduler = IoScheduler::new(Arc::new(clock), emitter, 64);
 
     let chunk = ChunkId::from_data(b"test-chunk");
     let tier = TierId::Disk;
 
     // Issue
-    let id = scheduler.issue(IoOperation::Read, chunk, tier);
+    let id = scheduler.issue(IoOperation::Read, chunk, tier).unwrap();
     assert_eq!(scheduler.pending_count(), 1);
 
     // Advance clock by sleeping (real time, but deterministic provider uses its own clock)

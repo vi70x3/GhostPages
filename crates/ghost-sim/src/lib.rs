@@ -16,9 +16,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use config::SimConfig;
 use ghost_core::emitter::EventEmitter;
-use ghost_core::error::GhostError;
 use ghost_core::io_abstraction::{IoOperation, IoScheduler};
-use ghost_core::state::{ChunkState, PhysicalCost, PressureState};
+use ghost_core::state::{PhysicalCost, PressureState};
 use ghost_core::time::RealTimeProvider;
 use ghost_core::types::ChunkId;
 use ghost_core::types::TierId;
@@ -52,8 +51,6 @@ pub struct SimBackend {
     rng: Mutex<ChaCha8Rng>,
     /// Metrics.
     metrics: Arc<SimMetrics>,
-    /// Simple state map for simulation (replaces full state machine).
-    state_map: Mutex<BTreeMap<ChunkId, ChunkState>>,
     /// Set of allocated offsets (tracks all allocations, even before write).
     allocated_offsets: Mutex<BTreeSet<usize>>,
     /// Time the backend was created.
@@ -70,6 +67,7 @@ impl SimBackend {
         let io_scheduler = IoScheduler::new(
             Arc::new(RealTimeProvider::default()),
             EventEmitter::new(event_sender),
+            64,
         );
         Self {
             config,
@@ -78,7 +76,6 @@ impl SimBackend {
             used: AtomicU64::new(0),
             rng: Mutex::new(rng),
             metrics: Arc::new(SimMetrics::new()),
-            state_map: Mutex::new(BTreeMap::new()),
             allocated_offsets: Mutex::new(BTreeSet::new()),
             created_at: Instant::now(),
             io_scheduler: Mutex::new(io_scheduler),
@@ -292,7 +289,7 @@ impl StorageBackend for SimBackend {
             IoOperation::Write,
             chunk_id,
             TierId::Simulation,
-        );
+        ).map_err(|e| ghost_tier::BackendError::Internal(e.to_string()))?;
 
         // Simulate latency proportional to data size
         self.simulate_latency(data.len()).await;
@@ -352,7 +349,7 @@ impl StorageBackend for SimBackend {
             IoOperation::Read,
             chunk_id,
             TierId::Simulation,
-        );
+        ).map_err(|e| ghost_tier::BackendError::Internal(e.to_string()))?;
 
         // Simulate latency proportional to read size
         self.simulate_latency(buf.len()).await;
@@ -464,48 +461,10 @@ impl StorageBackend for SimBackend {
     }
 }
 
-impl SimBackend {
-    /// Register a chunk with the state machine.
-    pub fn register_chunk(&self, chunk_id: ChunkId) -> Result<(), GhostError> {
-        self.state_map.lock().insert(chunk_id, ChunkState::Allocated);
-        Ok(())
-    }
-
-    /// Transition a chunk to a new state.
-    pub fn transition_chunk(
-        &self,
-        chunk_id: &ChunkId,
-        next: ChunkState,
-    ) -> Result<ChunkState, GhostError> {
-        let mut map = self.state_map.lock();
-        match map.get_mut(chunk_id) {
-            Some(state) => {
-                *state = next.clone();
-                Ok(next)
-            }
-            None => Err(GhostError::ChunkNotFound(format!("{:?}", chunk_id))),
-        }
-    }
-
-    /// Get the current state of a chunk.
-    pub fn chunk_state(&self, chunk_id: &ChunkId) -> Option<ChunkState> {
-        self.state_map.lock().get(chunk_id).cloned()
-    }
-
-    /// Get all chunks in a given state.
-    pub fn chunks_in_state(&self, state: ChunkState) -> Vec<ChunkId> {
-        self.state_map.lock()
-            .iter()
-            .filter_map(|(id, s)| if *s == state { Some(id.clone()) } else { None })
-            .collect()
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ghost_core::state::ChunkState;
-    use ghost_core::types::ChunkId;
 
     fn test_config() -> SimConfig {
         SimConfig::default().with_seed(42)
@@ -751,75 +710,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sim_backend_state_machine_integration() {
+    async fn test_sim_backend_is_passive_storage_only() {
+        // SimBackend must NOT own a StateMachine — only ghost-daemon may mutate chunk state.
+        // This test verifies the backend operates purely as a StorageBackend.
         let backend = SimBackend::new(test_config_with_capacity(1024 * 1024));
-        let data = b"state machine test";
-        let chunk_id = ChunkId::from_data(data);
+        let data = b"passive backend test";
 
-        // Register chunk
-        backend.register_chunk(chunk_id).unwrap();
-
-        // Initial state should be Allocated
-        let state = backend.chunk_state(&chunk_id);
-        assert_eq!(state, Some(ChunkState::Allocated));
-
-        // Allocate and write
+        // Allocate, write, read, deallocate — all without state machine involvement
         let alloc = backend.allocate(data.len()).await.unwrap();
         backend.write(&alloc, data).await.unwrap();
 
-        // Transition to Stored
-        backend
-            .transition_chunk(&chunk_id, ChunkState::Stored)
-            .unwrap();
-        assert_eq!(backend.chunk_state(&chunk_id), Some(ChunkState::Stored));
-
-        // Transition to Cached
-        backend
-            .transition_chunk(&chunk_id, ChunkState::Cached)
-            .unwrap();
-        assert_eq!(backend.chunk_state(&chunk_id), Some(ChunkState::Cached));
-
-        // Transition back to Stored first (Cached -> Evicted is not valid)
-        backend
-            .transition_chunk(&chunk_id, ChunkState::Stored)
-            .unwrap();
-        assert_eq!(backend.chunk_state(&chunk_id), Some(ChunkState::Stored));
-
-        // Transition to Evicted
-        backend
-            .transition_chunk(&chunk_id, ChunkState::Evicted)
-            .unwrap();
-        assert_eq!(backend.chunk_state(&chunk_id), Some(ChunkState::Evicted));
+        let mut buf = vec![0u8; data.len()];
+        backend.read(&alloc, &mut buf).await.unwrap();
+        assert_eq!(&buf, data);
 
         backend.deallocate(alloc).await.unwrap();
     }
 
     #[tokio::test]
-    async fn test_sim_backend_chunks_in_state() {
-        let backend = SimBackend::new(test_config_with_capacity(1024 * 1024));
+    async fn test_sim_backend_no_state_machine_ownership() {
+        // Verify that multiple SimBackend instances operate independently
+        // without any shared or owned state machine.
+        let backend1 = SimBackend::new(test_config_with_capacity(1024 * 1024));
+        let backend2 = SimBackend::new(test_config_with_capacity(1024 * 1024));
 
-        let data1 = b"chunk one";
-        let data2 = b"chunk two";
-        let id1 = ChunkId::from_data(data1);
-        let id2 = ChunkId::from_data(data2);
+        let data = b"independent backends";
 
-        backend.register_chunk(id1).unwrap();
-        backend.register_chunk(id2).unwrap();
+        let alloc1 = backend1.allocate(data.len()).await.unwrap();
+        let alloc2 = backend2.allocate(data.len()).await.unwrap();
 
-        // Both start as Allocated
-        let allocated = backend.chunks_in_state(ChunkState::Allocated);
-        assert_eq!(allocated.len(), 2);
+        backend1.write(&alloc1, data).await.unwrap();
+        backend2.write(&alloc2, data).await.unwrap();
 
-        // Transition one to Stored
-        backend.transition_chunk(&id1, ChunkState::Stored).unwrap();
+        let mut buf1 = vec![0u8; data.len()];
+        backend1.read(&alloc1, &mut buf1).await.unwrap();
+        assert_eq!(&buf1, data);
 
-        let allocated = backend.chunks_in_state(ChunkState::Allocated);
-        assert_eq!(allocated.len(), 1);
-        assert_eq!(allocated[0], id2);
+        let mut buf2 = vec![0u8; data.len()];
+        backend2.read(&alloc2, &mut buf2).await.unwrap();
+        assert_eq!(&buf2, data);
 
-        let stored = backend.chunks_in_state(ChunkState::Stored);
-        assert_eq!(stored.len(), 1);
-        assert_eq!(stored[0], id1);
+        backend1.deallocate(alloc1).await.unwrap();
+        backend2.deallocate(alloc2).await.unwrap();
     }
 
     #[tokio::test]

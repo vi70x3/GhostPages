@@ -474,6 +474,120 @@ impl EventHandler for TracingHandler {
                         "IO pressure changed"
                     );
                 }
+                Event::MemoryStatsChanged {
+                    total_kb,
+                    available_kb,
+                    swap_used_kb,
+                    dirty_kb,
+                    ..
+                } => {
+                    tracing::info!(
+                        total_kb,
+                        available_kb,
+                        swap_used_kb,
+                        dirty_kb,
+                        "Memory stats changed"
+                    );
+                }
+                Event::VmstatChanged {
+                    pgscan_kswapd,
+                    pgscan_direct,
+                    oom_kill,
+                    pswpin,
+                    pswpout,
+                    ..
+                } => {
+                    tracing::info!(
+                        pgscan_kswapd,
+                        pgscan_direct,
+                        oom_kill,
+                        pswpin,
+                        pswpout,
+                        "VM stats changed"
+                    );
+                }
+                Event::SwapTopologyChanged {
+                    devices,
+                    total_kb,
+                    used_kb,
+                    ..
+                } => {
+                    tracing::info!(
+                        devices = ?devices,
+                        total_kb,
+                        used_kb,
+                        "Swap topology changed"
+                    );
+                }
+                Event::SwapUtilizationChanged {
+                    device,
+                    used_kb,
+                    total_kb,
+                    ..
+                } => {
+                    tracing::info!(
+                        device,
+                        used_kb,
+                        total_kb,
+                        "Swap utilization changed"
+                    );
+                }
+                Event::ZramUtilizationChanged {
+                    device,
+                    orig_kb,
+                    comp_kb,
+                    ratio,
+                    ..
+                } => {
+                    tracing::info!(
+                        device,
+                        orig_kb,
+                        comp_kb,
+                        ratio,
+                        "ZRAM utilization changed"
+                    );
+                }
+                Event::TierInventoryChanged { tiers, .. } => {
+                    tracing::info!(
+                        tiers = ?tiers,
+                        "Tier inventory changed"
+                    );
+                }
+                Event::HotnessSampled { provider, num_samples, hot_count, cold_count, .. } => {
+                    tracing::info!(                        provider = %provider,
+                        num_samples,
+                        hot_count,
+                        cold_count,
+                        "Hotness sampled"
+                    );
+                }
+                Event::HotnessChanged { chunk_id, old_temp, new_temp, .. } => {
+                    tracing::info!(                        chunk_id = %chunk_id,
+                        old_temp = %old_temp,
+                        new_temp = %new_temp,
+                        "Hotness changed"
+                    );
+                }
+                Event::TierUtilizationChanged {
+                    tier,
+                    used_bytes,
+                    total_bytes,
+                    ..
+                } => {
+                    tracing::info!(
+                        tier = %tier,
+                        used_bytes,
+                        total_bytes,
+                        "Tier utilization changed"
+                    );
+                }
+                Event::PolicyRecommendationGenerated { recommendations, pressure_level, .. } => {
+                    tracing::info!(
+                        recommendations = recommendations.len(),
+                        pressure_level = %pressure_level,
+                        "Policy recommendations generated"
+                    );
+                }
             }
 
             Ok(())

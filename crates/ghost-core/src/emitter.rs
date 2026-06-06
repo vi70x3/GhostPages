@@ -406,6 +406,88 @@ impl EventEmitter {
         })
         .await
     }
+
+    // ── Hotness events ─────────────────────────────────────────────────────────
+
+    /// Emit [`Event::HotnessSampled`].
+    pub async fn hotness_sampled(
+        &self,
+        provider: impl Into<String>,
+        num_samples: usize,
+        hot_count: usize,
+        cold_count: usize,
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
+        self.emit(Event::HotnessSampled {
+            provider: provider.into(),
+            num_samples,
+            hot_count,
+            cold_count,
+            sequence_id: 0,
+        })
+        .await
+    }
+
+    /// Emit [`Event::HotnessChanged`].
+    pub async fn hotness_changed(
+        &self,
+        chunk_id: ChunkId,
+        old_temp: impl Into<String>,
+        new_temp: impl Into<String>,
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
+        self.emit(Event::HotnessChanged {
+            chunk_id,
+            old_temp: old_temp.into(),
+            new_temp: new_temp.into(),
+            sequence_id: 0,
+        })
+        .await
+    }
+
+
+    // ── Policy events ─────────────────────────────────────────────────────────
+
+    /// Emit [`Event::PolicyRecommendationGenerated`].
+    pub async fn policy_recommendation_generated(
+        &self,
+        recommendations: Vec<String>,
+        pressure_level: impl Into<String>,
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
+        self.emit(Event::PolicyRecommendationGenerated {
+            recommendations,
+            pressure_level: pressure_level.into(),
+            sequence_id: 0,
+        })
+        .await
+    }
+    // ── Tier inventory events ─────────────────────────────────────────────────
+
+    /// Emit [`Event::TierInventoryChanged`].
+    pub async fn tier_inventory_changed(
+        &self,
+        tiers: Vec<String>,
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
+        self.emit(Event::TierInventoryChanged {
+            tiers,
+            sequence_id: 0,
+        })
+        .await
+    }
+
+    /// Emit [`Event::TierUtilizationChanged`].
+    pub async fn tier_utilization_changed(
+        &self,
+        tier: impl Into<String>,
+        used_bytes: u64,
+        total_bytes: u64,
+    ) -> Result<(), mpsc::error::SendError<EventRecord>> {
+        self.emit(Event::TierUtilizationChanged {
+            tier: tier.into(),
+            used_bytes,
+            total_bytes,
+            sequence_id: 0,
+        })
+        .await
+    }
 }
 
 /// Get the current timestamp in seconds since Unix epoch.

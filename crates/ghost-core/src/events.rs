@@ -416,6 +416,98 @@ pub enum Event {
         buffered: usize,
         capacity: usize,
     },
+
+    // ── Memory Statistics ─────────────────────────────────────────────────────
+
+    /// Memory statistics changed (from /proc/meminfo).
+    MemoryStatsChanged {
+        sequence_id: u64,
+        total_kb: u64,
+        available_kb: u64,
+        swap_used_kb: u64,
+        dirty_kb: u64,
+    },
+
+    /// VM statistics changed (from /proc/vmstat).
+    VmstatChanged {
+        sequence_id: u64,
+        pgscan_kswapd: u64,
+        pgscan_direct: u64,
+        oom_kill: u64,
+        pswpin: u64,
+        pswpout: u64,
+    },
+
+    // ── Swap ────────────────────────────────────────────────────────────────────
+
+    /// Swap topology changed (from /proc/swaps).
+    SwapTopologyChanged {
+        sequence_id: u64,
+        devices: Vec<String>,
+        total_kb: u64,
+        used_kb: u64,
+    },
+
+    /// Swap utilization changed for a device.
+    SwapUtilizationChanged {
+        sequence_id: u64,
+        device: String,
+        used_kb: u64,
+        total_kb: u64,
+    },
+
+    // ── ZRAM ─────────────────────────────────────────────────────────────────────
+
+    /// ZRAM utilization changed for a device.
+    ZramUtilizationChanged {
+        sequence_id: u64,
+        device: String,
+        orig_kb: u64,
+        comp_kb: u64,
+        ratio: f32,
+    },
+
+    /// Tier inventory changed (includes ZRAM tiers).
+    TierInventoryChanged {
+        sequence_id: u64,
+        tiers: Vec<String>,
+    },
+
+    /// Tier utilization changed for a specific tier.
+    TierUtilizationChanged {
+        sequence_id: u64,
+        tier: String,
+        used_bytes: u64,
+        total_bytes: u64,
+    },
+
+    // ── Hotness ─────────────────────────────────────────────────────────────────
+
+    /// A hotness sample was collected from a provider.
+    HotnessSampled {
+        sequence_id: u64,
+        provider: String,
+        num_samples: usize,
+        hot_count: usize,
+        cold_count: usize,
+    },
+
+    /// Hotness changed for a chunk.
+    HotnessChanged {
+        sequence_id: u64,
+        chunk_id: ChunkId,
+        old_temp: String,
+        new_temp: String,
+    },
+
+    // ── Policy ────────────────────────────────────────────────────────────────────
+
+    /// Policy evaluation produced recommendations.
+    PolicyRecommendationGenerated {
+        sequence_id: u64,
+        recommendations: Vec<String>,
+        pressure_level: String,
+    },
 }
 
 // ─── Event Record ──────────────────────────────────────────────────────────────
@@ -525,6 +617,16 @@ impl Event {
             Event::IoBufferStateChange { sequence_id, .. } => *sequence_id,
             Event::MemoryPressureChanged { sequence_id, .. } => *sequence_id,
             Event::IoPressureChanged { sequence_id, .. } => *sequence_id,
+            Event::MemoryStatsChanged { sequence_id, .. } => *sequence_id,
+            Event::VmstatChanged { sequence_id, .. } => *sequence_id,
+            Event::SwapTopologyChanged { sequence_id, .. } => *sequence_id,
+            Event::SwapUtilizationChanged { sequence_id, .. } => *sequence_id,
+            Event::ZramUtilizationChanged { sequence_id, .. } => *sequence_id,
+            Event::TierInventoryChanged { sequence_id, .. } => *sequence_id,
+            Event::TierUtilizationChanged { sequence_id, .. } => *sequence_id,
+            Event::HotnessSampled { sequence_id, .. } => *sequence_id,
+            Event::HotnessChanged { sequence_id, .. } => *sequence_id,
+            Event::PolicyRecommendationGenerated { sequence_id, .. } => *sequence_id,
         }
     }
 
@@ -571,6 +673,16 @@ impl Event {
             Event::IoBufferStateChange { sequence_id: s, .. } => *s = sequence_id,
             Event::MemoryPressureChanged { sequence_id: s, .. } => *s = sequence_id,
             Event::IoPressureChanged { sequence_id: s, .. } => *s = sequence_id,
+            Event::MemoryStatsChanged { sequence_id: s, .. } => *s = sequence_id,
+            Event::VmstatChanged { sequence_id: s, .. } => *s = sequence_id,
+            Event::SwapTopologyChanged { sequence_id: s, .. } => *s = sequence_id,
+            Event::SwapUtilizationChanged { sequence_id: s, .. } => *s = sequence_id,
+            Event::ZramUtilizationChanged { sequence_id: s, .. } => *s = sequence_id,
+            Event::TierInventoryChanged { sequence_id: s, .. } => *s = sequence_id,
+            Event::TierUtilizationChanged { sequence_id: s, .. } => *s = sequence_id,
+            Event::HotnessSampled { sequence_id: s, .. } => *s = sequence_id,
+            Event::HotnessChanged { sequence_id: s, .. } => *s = sequence_id,
+            Event::PolicyRecommendationGenerated { sequence_id: s, .. } => *s = sequence_id,
         }
         self
     }
@@ -620,6 +732,8 @@ impl Event {
             Event::IoBufferStateChange { tier, .. } => Some(*tier),
             Event::MemoryPressureChanged { .. } => None,
             Event::IoPressureChanged { .. } => None,
+            Event::SwapTopologyChanged { .. } => None,
+            Event::SwapUtilizationChanged { .. } => None,
             _ => None,
         }
     }
@@ -673,6 +787,15 @@ impl Event {
             | Event::IoBufferStateChange { .. } => "io",
             | Event::MemoryPressureChanged { .. } => "pressure",
             | Event::IoPressureChanged { .. } => "pressure",
+            | Event::MemoryStatsChanged { .. } => "memory",
+            | Event::VmstatChanged { .. } => "memory",
+            | Event::SwapTopologyChanged { .. } => "swap",
+            | Event::SwapUtilizationChanged { .. } => "swap",
+            | Event::ZramUtilizationChanged { .. } => "zram",
+            | Event::TierInventoryChanged { .. }
+            | Event::TierUtilizationChanged { .. } => "tier_inventory",
+            | Event::PolicyRecommendationGenerated { .. } => "policy",
+            | Event::HotnessSampled { .. } | Event::HotnessChanged { .. } => "hotness",
         }
     }
 
@@ -717,6 +840,16 @@ impl Event {
             Event::IoBufferStateChange { .. } => "io_buffer_state_change",
             Event::MemoryPressureChanged { .. } => "memory_pressure_changed",
             Event::IoPressureChanged { .. } => "io_pressure_changed",
+            Event::MemoryStatsChanged { .. } => "memory_stats_changed",
+            Event::VmstatChanged { .. } => "vmstat_changed",
+            Event::SwapTopologyChanged { .. } => "swap_topology_changed",
+            Event::SwapUtilizationChanged { .. } => "swap_utilization_changed",
+            Event::ZramUtilizationChanged { .. } => "zram_utilization_changed",
+            Event::TierInventoryChanged { .. } => "tier_inventory_changed",
+            Event::TierUtilizationChanged { .. } => "tier_utilization_changed",
+            Event::PolicyRecommendationGenerated { .. } => "policy_recommendation_generated",
+            Event::HotnessSampled { .. } => "hotness_sampled",
+            Event::HotnessChanged { .. } => "hotness_changed",
         }
     }
 }

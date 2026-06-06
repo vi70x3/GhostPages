@@ -70,6 +70,34 @@ pub struct PrometheusMetrics {
     pub memory_pressure_avg300: IntGauge,
     /// I/O pressure 10-second average.
     pub io_pressure_avg10: IntGauge,
+
+    // Memory statistics gauges
+    /// Total system memory in bytes.
+    pub memory_total_bytes: IntGauge,
+    /// Available memory in bytes.
+    pub memory_available_bytes: IntGauge,
+    /// Used swap space in bytes.
+    pub memory_swap_used_bytes: IntGauge,
+
+    // VM statistics counters
+    /// Pages scanned by kswapd (background reclaim).
+    pub vmstat_pgscan_kswapd: IntCounter,
+    /// Pages scanned by direct reclaim.
+    pub vmstat_pgscan_direct: IntCounter,
+    /// Number of OOM kills.
+    pub vmstat_oom_kill: IntCounter,
+    /// Pages swapped in.
+    pub vmstat_pswpin: IntCounter,
+    /// Pages swapped out.
+    pub vmstat_pswpout: IntCounter,
+
+    // Swap gauges
+    /// Total swap space in bytes.
+    pub swap_total_bytes: IntGauge,
+    /// Used swap space in bytes.
+    pub swap_used_bytes: IntGauge,
+    /// Number of swap devices.
+    pub swap_device_count: IntGauge,
 }
 
 impl PrometheusMetrics {
@@ -186,6 +214,72 @@ impl PrometheusMetrics {
         )
         .map_err(prom_err)?;
 
+        let memory_total_bytes = IntGauge::new(
+            "ghost_memory_total_bytes",
+            "Total system memory in bytes from /proc/meminfo",
+        )
+        .map_err(prom_err)?;
+
+        let memory_available_bytes = IntGauge::new(
+            "ghost_memory_available_bytes",
+            "Available memory in bytes from /proc/meminfo",
+        )
+        .map_err(prom_err)?;
+
+        let memory_swap_used_bytes = IntGauge::new(
+            "ghost_memory_swap_used_bytes",
+            "Used swap space in bytes from /proc/meminfo",
+        )
+        .map_err(prom_err)?;
+
+        let vmstat_pgscan_kswapd = IntCounter::new(
+            "ghost_vmstat_pgscan_kswapd",
+            "Pages scanned by kswapd (background reclaim) from /proc/vmstat",
+        )
+        .map_err(prom_err)?;
+
+        let vmstat_pgscan_direct = IntCounter::new(
+            "ghost_vmstat_pgscan_direct",
+            "Pages scanned by direct reclaim from /proc/vmstat",
+        )
+        .map_err(prom_err)?;
+
+        let vmstat_oom_kill = IntCounter::new(
+            "ghost_vmstat_oom_kill",
+            "Number of OOM kills from /proc/vmstat",
+        )
+        .map_err(prom_err)?;
+
+        let vmstat_pswpin = IntCounter::new(
+            "ghost_vmstat_pswpin",
+            "Pages swapped in from /proc/vmstat",
+        )
+        .map_err(prom_err)?;
+
+        let vmstat_pswpout = IntCounter::new(
+            "ghost_vmstat_pswpout",
+            "Pages swapped out from /proc/vmstat",
+        )
+        .map_err(prom_err)?;
+
+        let swap_total_bytes = IntGauge::new(
+            "ghost_swap_total_bytes",
+            "Total swap space in bytes from /proc/swaps",
+        )
+        .map_err(prom_err)?;
+
+        let swap_used_bytes = IntGauge::new(
+            "ghost_swap_used_bytes",
+            "Used swap space in bytes from /proc/swaps",
+        )
+        .map_err(prom_err)?;
+
+        let swap_device_count = IntGauge::new(
+            "ghost_swap_device_count",
+            "Number of swap devices from /proc/swaps",
+        )
+        .map_err(prom_err)?;
+
         // Register all metrics
         registry
             .register(Box::new(store_total.clone()))
@@ -244,6 +338,30 @@ impl PrometheusMetrics {
         registry
             .register(Box::new(io_pressure_avg10.clone()))
             .map_err(prom_err)?;
+        registry
+            .register(Box::new(memory_total_bytes.clone()))
+            .map_err(prom_err)?;
+        registry
+            .register(Box::new(memory_available_bytes.clone()))
+            .map_err(prom_err)?;
+        registry
+            .register(Box::new(memory_swap_used_bytes.clone()))
+            .map_err(prom_err)?;
+        registry
+            .register(Box::new(vmstat_pgscan_kswapd.clone()))
+            .map_err(prom_err)?;
+        registry
+            .register(Box::new(vmstat_pgscan_direct.clone()))
+            .map_err(prom_err)?;
+        registry
+            .register(Box::new(vmstat_oom_kill.clone()))
+            .map_err(prom_err)?;
+        registry
+            .register(Box::new(vmstat_pswpin.clone()))
+            .map_err(prom_err)?;
+        registry
+            .register(Box::new(vmstat_pswpout.clone()))
+            .map_err(prom_err)?;
 
         Ok(Self {
             registry,
@@ -266,6 +384,17 @@ impl PrometheusMetrics {
             memory_pressure_avg60,
             memory_pressure_avg300,
             io_pressure_avg10,
+            memory_total_bytes,
+            memory_available_bytes,
+            memory_swap_used_bytes,
+            vmstat_pgscan_kswapd,
+            vmstat_pgscan_direct,
+            vmstat_oom_kill,
+            vmstat_pswpin,
+            vmstat_pswpout,
+            swap_total_bytes,
+            swap_used_bytes,
+            swap_device_count,
         })
     }
 }

@@ -3,11 +3,15 @@
 //! Maintains a map of chunk hotness scores, updated on each access.
 //! Provides methods to query hotness, find hot/cold chunks, and
 //! periodically decay recency scores.
+//!
+//! Optionally accepts a [`HotnessProvider`] to integrate external hotness
+//! data (e.g., from DAMON on Linux) with the internal chunk-level tracking.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use ghost_core::hotness::ChunkHotness;
+use ghost_core::hotness_provider::HotnessProvider;
 use ghost_core::trace::{current_timestamp, TraceEvent};
 use ghost_core::types::{ChunkId, TierId};
 
@@ -18,11 +22,17 @@ use crate::trace_log::TraceLog;
 /// SUBSYSTEM: Runtime State Owner
 ///
 /// Hotness tracker that maintains access pattern analysis for all chunks.
+///
+/// When a [`HotnessProvider`] is set via [`set_hotness_provider`](HotnessTracker::set_hotness_provider),
+/// the tracker can integrate external hotness observations (e.g., from DAMON)
+/// with its internal chunk-level access tracking.
 pub struct HotnessTracker {
     hotness_map: Arc<RwLock<BTreeMap<ChunkId, ChunkHotness>>>,
     trace_log: Arc<TraceLog>,
     /// Maximum number of chunks to track.
     max_tracked: usize,
+    /// Optional external hotness provider.
+    hotness_provider: Arc<RwLock<Option<Arc<dyn HotnessProvider>>>>,
 }
 
 impl HotnessTracker {
@@ -32,7 +42,29 @@ impl HotnessTracker {
             hotness_map: Arc::new(RwLock::new(BTreeMap::new())),
             trace_log,
             max_tracked,
+            hotness_provider: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Set an external hotness provider.
+    ///
+    /// When set, the tracker will periodically call `sample()` on the provider
+    /// to integrate external hotness observations with internal tracking.
+    ///
+    /// Pass `None` to clear the provider.
+    pub fn set_hotness_provider(&self, provider: Option<Arc<dyn HotnessProvider>>) {
+        let mut guard = self.hotness_provider.write();
+        *guard = provider;
+    }
+
+    /// Get the currently configured hotness provider, if any.
+    pub fn hotness_provider(&self) -> Option<Arc<dyn HotnessProvider>> {
+        self.hotness_provider.read().clone()
+    }
+
+    /// Check if a hotness provider is configured.
+    pub fn has_hotness_provider(&self) -> bool {
+        self.hotness_provider.read().is_some()
     }
 
     /// Record an access to a chunk.
@@ -143,7 +175,7 @@ impl Default for HotnessTracker {
     }
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+// ─── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -289,5 +321,18 @@ mod tests {
     fn test_hotness_tracker_default() {
         let tracker = HotnessTracker::default();
         assert!(tracker.is_empty());
+    }
+
+    #[test]
+    fn test_hotness_tracker_set_provider() {
+        let tracker = HotnessTracker::new(1000, test_trace_log());
+
+        // Initially no provider
+        assert!(!tracker.has_hotness_provider());
+        assert!(tracker.hotness_provider().is_none());
+
+        // Setting None should be a no-op
+        tracker.set_hotness_provider(None);
+        assert!(!tracker.has_hotness_provider());
     }
 }

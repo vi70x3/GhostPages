@@ -235,3 +235,85 @@ mod tests {
         assert_eq!(m.jobs_submitted.load(Ordering::Relaxed), 0);
     }
 }
+
+// ─── Hotness Metrics ──────────────────────────────────────────────────────────
+
+/// SUBSYSTEM: Hotness Tracker
+///
+/// Prometheus-style metrics for hotness tracking.
+///
+/// All counters are atomic and can be read/written from multiple threads.
+#[derive(Debug)]
+pub struct HotnessMetrics {
+    /// Total number of hotness samples collected (counter).
+    pub samples_total: AtomicU64,
+
+    /// Number of hot memory regions currently tracked (gauge).
+    pub hot_regions: AtomicU64,
+
+    /// Number of cold memory regions currently tracked (gauge).
+    pub cold_regions: AtomicU64,
+}
+
+impl HotnessMetrics {
+    /// Create a new hotness metrics instance with all counters at zero.
+    pub fn new() -> Self {
+        Self {
+            samples_total: AtomicU64::new(0),
+            hot_regions: AtomicU64::new(0),
+            cold_regions: AtomicU64::new(0),
+        }
+    }
+
+    /// Record a hotness sample snapshot.
+    pub fn record_snapshot(&self, hot_count: usize, cold_count: usize) {
+        self.samples_total.fetch_add(1, Ordering::Relaxed);
+        self.hot_regions.store(hot_count as u64, Ordering::Relaxed);
+        self.cold_regions.store(cold_count as u64, Ordering::Relaxed);
+    }
+}
+
+impl Default for HotnessMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod hotness_metrics_tests {
+    use super::*;
+
+    #[test]
+    fn test_hotness_metrics_new() {
+        let m = HotnessMetrics::new();
+        assert_eq!(m.samples_total.load(Ordering::Relaxed), 0);
+        assert_eq!(m.hot_regions.load(Ordering::Relaxed), 0);
+        assert_eq!(m.cold_regions.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_hotness_metrics_record_snapshot() {
+        let m = HotnessMetrics::new();
+        m.record_snapshot(3, 7);
+        assert_eq!(m.samples_total.load(Ordering::Relaxed), 1);
+        assert_eq!(m.hot_regions.load(Ordering::Relaxed), 3);
+        assert_eq!(m.cold_regions.load(Ordering::Relaxed), 7);
+    }
+
+    #[test]
+    fn test_hotness_metrics_multiple_snapshots() {
+        let m = HotnessMetrics::new();
+        m.record_snapshot(2, 8);
+        m.record_snapshot(5, 5);
+        assert_eq!(m.samples_total.load(Ordering::Relaxed), 2);
+        // Gauges are overwritten, not accumulated
+        assert_eq!(m.hot_regions.load(Ordering::Relaxed), 5);
+        assert_eq!(m.cold_regions.load(Ordering::Relaxed), 5);
+    }
+
+    #[test]
+    fn test_hotness_metrics_default() {
+        let m = HotnessMetrics::default();
+        assert_eq!(m.samples_total.load(Ordering::Relaxed), 0);
+    }
+}

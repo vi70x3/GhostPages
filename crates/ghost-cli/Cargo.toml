@@ -12,6 +12,7 @@ description = "CLI tools for interacting with GhostPages daemon"
 ghost-core = { path = "../ghost-core" }
 ghost-ipc = { path = "../ghost-ipc" }
 ghost-linux = { path = "../ghost-linux" }
+ghost-evaluator = { path = "../ghost-evaluator" }
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true

@@ -27,6 +27,7 @@ This design ensures that **every state change is observable** and **no silent re
 - **Orchestrator Layer (`ghost-daemon`)** -- coordinates storage back-ends, handles IPC, records trace events, and mutates the state machine.
 - **Backend Layer (`ghost-sim`, `ghost-replay`, `ghost-tier`, etc.)** -- implements storage semantics, reads state via the orchestrator, and never mutates it.
 - **Policy Layer (`ghost-policy`)** -- makes placement decisions based on pressure information; it does not access the state machine.
+- **Evaluation Layer (`ghost-evaluator`)** -- scores recommendations, runs policy tournaments, and tracks recommendation stability; it does not access the state machine or perform I/O.
 - **IPC Layer (`ghost-ipc`)** -- centralised protocol definitions and framing; used by the daemon and CLI.
 
 ## Enforced Invariants
@@ -104,6 +105,70 @@ All physical cost calculations are deterministic functions of:
 - Seeded RNG in `SimBackend` (via `ChaCha8Rng`)
 
 Given the same inputs, `decide_migration()` always produces the same output — verified by replay equivalence tests.
+
+## Recommendation Evaluation & Policy Intelligence (Phase 4.5)
+
+The `ghost-evaluator` crate proves that GhostPages can make **better memory placement decisions than baseline Linux behavior**. It scores recommendations, runs policy tournaments, tracks recommendation stability, and exposes evaluation metrics — all without performing I/O or accessing the state machine.
+
+### Design Principle: Pure Deterministic Scoring
+
+All scoring functions in `ghost-evaluator` are **pure/deterministic** — no I/O, no mutation, no side effects. Given the same inputs, every scoring function always produces the same output. This enables reproducible evaluation and trustworthy policy comparison.
+
+### Modules
+
+| Module | Purpose |
+|--------|---------|
+| `scoring` | `RecommendationScore` with 6 weighted metrics: fault_reduction, swap_reduction, zram_efficiency, pressure_reduction, tier_balance, stability |
+| `baseline` | `LinuxBaselinePolicy` representing default Linux memory placement behavior; serves as the "do nothing" comparison baseline |
+| `tournament` | `PolicyArena` tournament framework for head-to-head policy comparison with multiple rounds and leaderboard tracking |
+| `stability` | `RecommendationStability` measuring recommendation churn — detects tier oscillation, temperature flips, and confidence variance |
+| `adaptive` | `AdaptiveTemperatureModel` for dynamic threshold adjustment based on system pressure and occupancy trends |
+| `lifecycle` | `RegionLifecycle` tracking temperature transitions (Hot → Warm → Cold → Frozen) with promotion/demotion counters |
+| `replay_analytics` | `ReplayAnalysisReport` for policy disagreement detection — compares what different policies would have recommended from the same signal snapshots |
+| `evaluator_metrics` | `EvaluatorMetrics` with 6 Prometheus metrics: recommendation scores, policy wins, stability indices, promotion/demotion counts, policy comparisons |
+
+### Key Types
+
+| Type | Description |
+|------|-------------|
+| `RecommendationScore` | 6-metric weighted score (0.0–1.0) evaluating a single recommendation |
+| `ScoringWeights` | Configurable weights for each metric in `RecommendationScore` |
+| `LinuxBaselinePolicy` | Simulates default Linux behavior (no GhostPages intelligence) |
+| `PolicyArena` | Tournament runner that scores multiple policies across the same workload |
+| `Policy` trait | Interface for pluggable scoring policies |
+| `RecommendationStability` | Tracks recommendation churn per region over time |
+| `AdaptiveTemperatureModel` | Dynamically adjusts hot/cold thresholds based on system state |
+| `RegionLifecycle` | Records temperature state transitions per memory region |
+| `ReplayAnalysisReport` | Identifies where policies disagree on placement decisions |
+| `EvaluatorMetrics` | Prometheus metric registration and recording |
+
+### Built-in Policies
+
+The evaluator ships with 4 built-in policies:
+
+1. **`ArenaLinuxBaselinePolicy`** — mirrors default Linux behavior; the baseline to beat
+2. **`PressurePolicy`** — scores based on memory pressure reduction potential
+3. **`HotnessPolicy`** — scores based on data hotness and access frequency
+4. **`HybridPolicy`** — combines pressure and hotness signals for balanced scoring
+
+### CLI Integration
+
+The evaluator is accessible through the `ghost-cli` with 4 subcommands:
+
+- `evaluator score` — score a recommendation against all policies
+- `evaluator baseline` — run the Linux baseline comparison
+- `evaluator tournament` — run a full policy tournament and display the leaderboard
+- `evaluator stability` — report recommendation stability metrics
+
+### Strategic Goal
+
+GhostPages' intelligence pipeline follows a clear progression:
+
+```
+Signals → State → Recommendations → Evaluation → Policy Learning
+```
+
+The `ghost-evaluator` crate completes the bridge from "Signals → State → Recommendations" to the full pipeline. It enables GhostPages to **evaluate whether its recommendations are actually useful** before implementing real migration — a critical safety property for a production memory management system.
 
 ## State Ownership
 

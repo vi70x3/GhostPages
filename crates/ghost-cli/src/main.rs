@@ -23,6 +23,12 @@ use ghost_ipc::protocol::{IpcResponse, TierInfo};
 use ghost_linux::damon::{DamonConfig, DamonHotnessProvider, SimulatedDamonProvider};
 use ghost_linux::policy::PolicyRuntime;
 use ghost_linux::tier_inventory::TierInventory;
+use ghost_evaluator::baseline::{evaluate_baseline, BaselineAction, BaselineRecommendation};
+use ghost_evaluator::scoring::{score_policy_evaluation, score_recommendation, RecommendationScore, ScoringWeights};
+use ghost_evaluator::stability::{RecommendationStability, StabilityTracker};
+use ghost_evaluator::tournament::{ArenaLinuxBaselinePolicy, HybridPolicy, PolicyArena, PressurePolicy, HotnessPolicy, TournamentResult};
+use ghost_linux::policy::Recommendation;
+use ghost_linux::policy_rules::SystemState;
 
 // ─── CLI Definition ────────────────────────────────────────────────────────────
 
@@ -202,6 +208,10 @@ enum Commands {
     /// Policy evaluation.
     #[command(subcommand)]
     Policy(PolicyCommands),
+
+    /// Evaluator commands for recommendation scoring and policy comparison.
+    #[command(subcommand)]
+    Evaluator(EvaluatorCommands),
 }
 
 /// Linux observation subcommands.
@@ -260,6 +270,50 @@ enum PolicyCommands {
         policy_a: String,
         /// Second policy name
         policy_b: String,
+    },
+}
+
+/// Evaluator commands for recommendation scoring and policy comparison.
+#[derive(Debug, Subcommand)]
+enum EvaluatorCommands {
+    /// Score a recommendation against state change.
+    Score {
+        /// Recommendation type (promote, demote, zram, diskswap, evict, noaction).
+        #[arg(long)]
+        recommendation: String,
+        /// DRAM pressure before (0.0-1.0).
+        #[arg(long, default_value = "0.5")]
+        dram_pressure_before: f32,
+        /// DRAM pressure after (0.0-1.0).
+        #[arg(long, default_value = "0.3")]
+        dram_pressure_after: f32,
+    },
+
+    /// Compare baseline Linux behavior vs GhostPages.
+    Baseline {
+        /// DRAM utilization (0.0-1.0).
+        #[arg(long, default_value = "0.85")]
+        dram_utilization: f32,
+        /// Swap utilization (0.0-1.0).
+        #[arg(long, default_value = "0.5")]
+        swap_utilization: f32,
+        /// DRAM pressure (0.0-1.0).
+        #[arg(long, default_value = "0.7")]
+        dram_pressure: f32,
+    },
+
+    /// Run a policy tournament with all built-in policies.
+    Tournament {
+        /// Number of rounds to run.
+        #[arg(long, default_value = "5")]
+        rounds: usize,
+    },
+
+    /// Show recommendation stability metrics.
+    Stability {
+        /// Window size for stability tracking.
+        #[arg(long, default_value = "100")]
+        window_size: usize,
     },
 }
 
@@ -1172,6 +1226,173 @@ async fn main() -> Result<()> {
                 }
             }
         }
+
+        // ─── Evaluator Commands ────────────────────────────────────────────────────
+
+        Commands::Evaluator(ref evaluator_cmd) => {
+            use ghost_core::state::PressureState;
+
+            match evaluator_cmd {
+                EvaluatorCommands::Score {
+                    recommendation,
+                    dram_pressure_before,
+                    dram_pressure_after,
+                } => {
+                    // Build before/after SystemState from CLI args
+                    let before = SystemState {
+                        dram_pressure: PressureState {
+                            memory_pressure: *dram_pressure_before,
+                            ..Default::default()
+                        },
+                        dram_utilization: *dram_pressure_before,
+                        swap_utilization: 0.3,
+                        zram_utilization: Some(0.4),
+                        io_pressure: PressureState::new(),
+                        hotness_summary: None,
+                        hotness_confidence: None,
+                    };
+
+                    let after = SystemState {
+                        dram_pressure: PressureState {
+                            memory_pressure: *dram_pressure_after,
+                            ..Default::default()
+                        },
+                        dram_utilization: *dram_pressure_after,
+                        swap_utilization: 0.2,
+                        zram_utilization: Some(0.5),
+                        io_pressure: PressureState::new(),
+                        hotness_summary: None,
+                        hotness_confidence: None,
+                    };
+
+                    // Parse recommendation type
+                    let rec = parse_recommendation_type(recommendation);
+
+                    let weights = ScoringWeights::default();
+                    let score = score_recommendation(&rec, &before, &after, &weights);
+
+                    println!("=== Recommendation Score ===");
+                    println!("Type: {}", recommendation);
+                    println!("DRAM pressure: {} → {}", dram_pressure_before, dram_pressure_after);
+                    println!();
+                    print_recommendation_score(&score);
+                }
+
+                EvaluatorCommands::Baseline {
+                    dram_utilization,
+                    swap_utilization,
+                    dram_pressure,
+                } => {
+                    let state = SystemState {
+                        dram_pressure: PressureState {
+                            memory_pressure: *dram_pressure,
+                            ..Default::default()
+                        },
+                        dram_utilization: *dram_utilization,
+                        swap_utilization: *swap_utilization,
+                        zram_utilization: Some(0.4),
+                        io_pressure: PressureState::new(),
+                        hotness_summary: None,
+                        hotness_confidence: None,
+                    };
+
+                    let baseline_recs = evaluate_baseline(&state);
+
+                    println!("=== Baseline Linux Evaluation ===");
+                    println!("DRAM utilization: {:.0}%", dram_utilization * 100.0);
+                    println!("Swap utilization: {:.0}%", swap_utilization * 100.0);
+                    println!("DRAM pressure: {:.0}%", dram_pressure * 100.0);
+                    println!();
+                    print_baseline_recommendations(&baseline_recs);
+
+                    // Also show scores for the baseline recommendations
+                    let after = SystemState {
+                        dram_pressure: PressureState {
+                            memory_pressure: (dram_pressure - 0.2).max(0.0),
+                            ..Default::default()
+                        },
+                        dram_utilization: (dram_utilization - 0.15).max(0.0),
+                        swap_utilization: (swap_utilization - 0.1).max(0.0),
+                        zram_utilization: Some(0.5),
+                        io_pressure: PressureState::new(),
+                        hotness_summary: None,
+                        hotness_confidence: None,
+                    };
+
+                    let recommendations: Vec<Recommendation> =
+                        baseline_recs.into_iter().map(Recommendation::from).collect();
+                    let score = score_policy_evaluation(&recommendations, &state, &after);
+
+                    println!();
+                    println!("=== Baseline Score (simulated improvement) ===");
+                    print_recommendation_score(&score);
+                }
+
+                EvaluatorCommands::Tournament { rounds } => {
+                    // Build simulated pressure scenarios
+                    let scenarios = build_tournament_scenarios(*rounds);
+
+                    let mut arena = PolicyArena::new();
+                    arena
+                        .add_policy(Box::new(ArenaLinuxBaselinePolicy))
+                        .add_policy(Box::new(PressurePolicy))
+                        .add_policy(Box::new(HotnessPolicy))
+                        .add_policy(Box::new(HybridPolicy));
+
+                    let result = arena.run_tournament(&scenarios);
+
+                    println!("=== Policy Tournament ===");
+                    println!("Rounds: {}", rounds);
+                    println!("Policies: LinuxBaseline, Pressure, Hotness, Hybrid");
+                    println!();
+                    print_tournament_result(&result);
+                }
+
+                EvaluatorCommands::Stability { window_size } => {
+                    let mut tracker = StabilityTracker::new(*window_size);
+
+                    // Feed simulated recommendations: mostly stable with occasional changes
+                    let state = SystemState {
+                        dram_pressure: PressureState::new(),
+                        dram_utilization: 0.4,
+                        swap_utilization: 0.15,
+                        zram_utilization: Some(0.3),
+                        io_pressure: PressureState::new(),
+                        hotness_summary: None,
+                        hotness_confidence: None,
+                    };
+
+                    let chunk_id = ChunkId::from_data(b"test_chunk");
+
+                    for i in 0..*window_size {
+                        let rec = if i % 20 == 0 && i > 0 {
+                            // Occasional non-NoAction recommendation
+                            Recommendation::PromoteToDram {
+                                chunk_id,
+                                reason: "periodic hot chunk".to_string(),
+                                confidence: 0.8,
+                                factors: vec!["periodic".to_string()],
+                            }
+                        } else {
+                            Recommendation::NoAction {
+                                reason: "system stable".to_string(),
+                                confidence: 1.0,
+                                factors: vec![],
+                            }
+                        };
+                        tracker.record(rec, &state, i as u64 * 60);
+                    }
+
+                    let stability = tracker.evaluate();
+
+                    println!("=== Recommendation Stability ===");
+                    println!("Window size: {}", window_size);
+                    println!("Entries: {}", window_size);
+                    println!();
+                    print_stability(&stability);
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1689,6 +1910,238 @@ fn format_timestamp(timestamp: u64) -> String {
     )
 }
 
+
+// ─── Evaluator Display Helpers ─────────────────────────────────────────────────
+
+fn print_recommendation_score(score: &RecommendationScore) {
+    println!("  Fault reduction:    {:.4}", score.fault_reduction);
+    println!("  Swap reduction:     {:.4}", score.swap_reduction);
+    println!("  ZRAM efficiency:    {:.4}", score.zram_efficiency);
+    println!("  Pressure reduction: {:.4}", score.pressure_reduction);
+    println!("  Tier balance:       {:.4}", score.tier_balance);
+    println!("  Stability:          {:.4}", score.stability);
+    println!("  ─────────────────────────────");
+    println!("  Overall score:      {:.4}", score.overall_score);
+}
+
+fn print_baseline_recommendations(recs: &[BaselineRecommendation]) {
+    if recs.is_empty() {
+        println!("  No baseline recommendations.");
+        return;
+    }
+    for (i, rec) in recs.iter().enumerate() {
+        let action_str = match rec.action {
+            BaselineAction::Evict => "Evict",
+            BaselineAction::SwapOut => "SwapOut",
+            BaselineAction::NoAction => "NoAction",
+        };
+        println!(
+            "  {}. [{}] {} (confidence={:.2})",
+            i + 1,
+            action_str,
+            rec.reason,
+            rec.confidence
+        );
+    }
+}
+
+fn print_tournament_result(result: &TournamentResult) {
+    // Print each round
+    for round in &result.rounds {
+        println!("── Round {} ──", round.round_index + 1);
+        for r in &round.results {
+            println!(
+                "  {:<16} overall={:.4}  recs={}",
+                r.policy_name,
+                r.score.overall_score,
+                r.recommendations.len()
+            );
+        }
+        if let Some(winner) = round.round_winner {
+            println!("  Winner: {}", winner);
+        }
+        println!();
+    }
+
+    // Print leaderboard
+    println!("── Leaderboard ──");
+    let mut entries: Vec<_> = result.summary.average_scores.iter().collect();
+    entries.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
+    for (i, (name, avg_score)) in entries.iter().enumerate() {
+        let wins = result.summary.policy_wins.get(*name).unwrap_or(&0);
+        println!("  {}. {:<16} avg={:.4}  wins={}", i + 1, name, avg_score, wins);
+    }
+
+    println!();
+    if let Some(winner) = result.winner {
+        println!("★ Overall winner: {}", winner);
+    } else {
+        println!("★ No winner (empty tournament).");
+    }
+
+    println!();
+    println!(
+        "  Best score:  {:.4}",
+        result.summary.best_overall_score
+    );
+    println!(
+        "  Worst score: {:.4}",
+        result.summary.worst_overall_score
+    );
+}
+
+fn print_stability(stability: &RecommendationStability) {
+    println!("  Recommendations/hour: {:.2}", stability.recommendations_per_hour);
+    println!("  Temperature flips:    {}", stability.temperature_flips);
+    println!("  Tier oscillations:    {}", stability.tier_oscillations);
+    println!("  Confidence variance:  {:.4}", stability.confidence_variance);
+    println!("  ─────────────────────────────");
+    println!("  Stability index:      {:.4}", stability.stability_index);
+
+    let assessment = if stability.stability_index >= 0.8 {
+        "Excellent"
+    } else if stability.stability_index >= 0.6 {
+        "Good"
+    } else if stability.stability_index >= 0.4 {
+        "Fair"
+    } else if stability.stability_index >= 0.2 {
+        "Poor"
+    } else {
+        "Critical"
+    };
+    println!("  Assessment:           {}", assessment);
+}
+
+// ─── Evaluator Helper Functions ─────────────────────────────────────────────────
+
+fn parse_recommendation_type(s: &str) -> Recommendation {
+    let chunk_id = ChunkId::from_data(b"cli_chunk");
+    match s.to_lowercase().as_str() {
+        "promote" => Recommendation::PromoteToDram {
+            chunk_id,
+            reason: "CLI: promote to DRAM".to_string(),
+            confidence: 0.9,
+            factors: vec!["cli_request".to_string()],
+        },
+        "demote" => Recommendation::DemoteHot {
+            tier: TierId::Ram,
+            target: TierId::Disk,
+            confidence: 0.8,
+            factors: vec!["cli_request".to_string()],
+        },
+        "zram" => Recommendation::MoveToZram {
+            chunk_id,
+            reason: "CLI: move to ZRAM".to_string(),
+            confidence: 0.85,
+            factors: vec!["cli_request".to_string()],
+        },
+        "diskswap" => Recommendation::MoveToDiskSwap {
+            chunk_id,
+            reason: "CLI: move to disk swap".to_string(),
+            confidence: 0.85,
+            factors: vec!["cli_request".to_string()],
+        },
+        "evict" => Recommendation::EvictCold {
+            tier: TierId::Ram,
+            count: 8,
+            confidence: 1.0,
+            factors: vec!["cli_request".to_string()],
+        },
+        _ => Recommendation::NoAction {
+            reason: "CLI: no action".to_string(),
+            confidence: 1.0,
+            factors: vec!["cli_request".to_string()],
+        },
+    }
+}
+
+fn build_tournament_scenarios(rounds: usize) -> Vec<(&'static SystemState, &'static SystemState)> {
+    // Use a static array of predefined scenarios that cycle
+    use std::sync::OnceLock;
+
+    static IDLE: OnceLock<SystemState> = OnceLock::new();
+    static MEDIUM: OnceLock<SystemState> = OnceLock::new();
+    static HIGH: OnceLock<SystemState> = OnceLock::new();
+    static CRITICAL: OnceLock<SystemState> = OnceLock::new();
+    static IMPROVED: OnceLock<SystemState> = OnceLock::new();
+
+    let idle = IDLE.get_or_init(|| SystemState {
+        dram_pressure: PressureState::new(),
+        dram_utilization: 0.3,
+        swap_utilization: 0.1,
+        zram_utilization: Some(0.2),
+        io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
+    });
+
+    let medium = MEDIUM.get_or_init(|| SystemState {
+        dram_pressure: PressureState {
+            memory_pressure: 0.55,
+            ..Default::default()
+        },
+        dram_utilization: 0.7,
+        swap_utilization: 0.2,
+        zram_utilization: Some(0.3),
+        io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
+    });
+
+    let high = HIGH.get_or_init(|| SystemState {
+        dram_pressure: PressureState {
+            memory_pressure: 0.8,
+            ..Default::default()
+        },
+        dram_utilization: 0.85,
+        swap_utilization: 0.3,
+        zram_utilization: Some(0.4),
+        io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
+    });
+
+    let critical = CRITICAL.get_or_init(|| SystemState {
+        dram_pressure: PressureState {
+            memory_pressure: 0.95,
+            ..Default::default()
+        },
+        dram_utilization: 0.97,
+        swap_utilization: 0.5,
+        zram_utilization: Some(0.6),
+        io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
+    });
+
+    let improved = IMPROVED.get_or_init(|| SystemState {
+        dram_pressure: PressureState {
+            memory_pressure: 0.4,
+            ..Default::default()
+        },
+        dram_utilization: 0.5,
+        swap_utilization: 0.15,
+        zram_utilization: Some(0.5),
+        io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
+    });
+
+    // Cycle through scenarios: idle→idle, medium→idle, high→improved, critical→high, high→medium
+    let scenario_pairs: Vec<(&SystemState, &SystemState)> = vec![
+        (idle, idle),
+        (medium, idle),
+        (high, improved),
+        (critical, high),
+        (high, medium),
+    ];
+
+    let mut result = Vec::new();
+    for i in 0..rounds {
+        result.push(scenario_pairs[i % scenario_pairs.len()]);
+    }
+    result
+}
 // ─── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

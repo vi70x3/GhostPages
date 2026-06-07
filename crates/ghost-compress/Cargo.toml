@@ -13,5 +13,8 @@ ghost-core = { path = "../ghost-core" }
 zstd = { workspace = true }
 thiserror = { workspace = true }
 
+[build-dependencies]
+zstd-sys = "=2.0.16"
+
 [dev-dependencies]
 proptest = { workspace = true }

@@ -1,0 +1,25 @@
+[package]
+name = "ghost-evaluator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Recommendation scoring and evaluation for GhostPages"
+
+[dependencies]
+ghost-core = { path = "../ghost-core" }
+ghost-linux = { path = "../ghost-linux" }
+ghost-policy = { path = "../ghost-policy" }
+ghost-replay = { path = "../ghost-replay" }
+ghost-metrics = { path = "../ghost-metrics" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+prometheus = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

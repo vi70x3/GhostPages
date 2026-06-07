@@ -41,6 +41,8 @@ fn test_evaluate_idle_system() {
         swap_utilization: 0.1,
         zram_utilization: Some(0.2),
         io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
     };
 
     let recs = rules.evaluate(&state);
@@ -66,6 +68,8 @@ fn test_evaluate_high_dram_pressure() {
         swap_utilization: 0.3,
         zram_utilization: Some(0.4),
         io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
     };
 
     let recs = rules.evaluate(&state);
@@ -92,6 +96,8 @@ fn test_evaluate_critical_dram_pressure() {
         swap_utilization: 0.5,
         zram_utilization: Some(0.6),
         io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
     };
 
     let recs = rules.evaluate(&state);
@@ -123,6 +129,8 @@ fn test_evaluate_with_zram_available() {
         swap_utilization: 0.3,
         zram_utilization: Some(0.4),
         io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
     };
 
     let state_without_zram = SystemState {
@@ -134,6 +142,8 @@ fn test_evaluate_with_zram_available() {
         swap_utilization: 0.3,
         zram_utilization: None,
         io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
     };
 
     let recs_with = rules.evaluate(&state_with_zram);
@@ -171,6 +181,8 @@ fn test_evaluate_deterministic() {
         swap_utilization: 0.3,
         zram_utilization: Some(0.4),
         io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
     };
 
     let recs1 = rules.evaluate(&state);
@@ -244,6 +256,8 @@ fn test_evaluate_replay() {
         swap_utilization: 0.3,
         zram_utilization: Some(0.4),
         io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
     };
 
     // "Record" — evaluate once
@@ -322,6 +336,8 @@ fn test_critical_pressure_no_zram_uses_disk_swap() {
         swap_utilization: 0.3,
         zram_utilization: None,
         io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
     };
 
     let recs = rules.evaluate(&state);
@@ -353,6 +369,8 @@ fn test_high_pressure_zram_full_uses_disk_swap() {
         swap_utilization: 0.3,
         zram_utilization: Some(0.95), // ZRAM is nearly full
         io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
     };
 
     let recs = rules.evaluate(&state);
@@ -380,6 +398,8 @@ fn test_medium_pressure_demotes() {
         swap_utilization: 0.3,
         zram_utilization: Some(0.4),
         io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
     };
 
     let recs = rules.evaluate(&state);
@@ -408,6 +428,8 @@ fn test_custom_thresholds() {
         swap_utilization: 0.3,
         zram_utilization: Some(0.4),
         io_pressure: PressureState::new(),
+        hotness_summary: None,
+        hotness_confidence: None,
     };
 
     let strict_recs = strict_rules.evaluate(&state);
@@ -430,6 +452,8 @@ fn test_recommendation_kind_strings() {
             Recommendation::PromoteToDram {
                 chunk_id: ChunkId::from_data(b"test"),
                 reason: "hot".into(),
+                confidence: 0.9,
+                factors: vec![],
             },
             "promote_to_dram",
         ),
@@ -437,6 +461,8 @@ fn test_recommendation_kind_strings() {
             Recommendation::MoveToZram {
                 chunk_id: ChunkId::from_data(b"test"),
                 reason: "cold".into(),
+                confidence: 0.8,
+                factors: vec![],
             },
             "move_to_zram",
         ),
@@ -444,12 +470,16 @@ fn test_recommendation_kind_strings() {
             Recommendation::MoveToDiskSwap {
                 chunk_id: ChunkId::from_data(b"test"),
                 reason: "cold".into(),
+                confidence: 0.8,
+                factors: vec![],
             },
             "move_to_disk_swap",
         ),
         (
             Recommendation::NoAction {
                 reason: "idle".into(),
+                confidence: 1.0,
+                factors: vec![],
             },
             "no_action",
         ),
@@ -457,6 +487,8 @@ fn test_recommendation_kind_strings() {
             Recommendation::EvictCold {
                 tier: TierId::Ram,
                 count: 4,
+                confidence: 1.0,
+                factors: vec![],
             },
             "evict_cold",
         ),
@@ -464,6 +496,8 @@ fn test_recommendation_kind_strings() {
             Recommendation::DemoteHot {
                 tier: TierId::GpuVram,
                 target: TierId::Disk,
+                confidence: 0.8,
+                factors: vec![],
             },
             "demote_hot",
         ),
@@ -479,12 +513,16 @@ fn test_recommendation_kind_strings() {
 fn test_recommendation_reason_strings() {
     let rec = Recommendation::NoAction {
         reason: "system is idle".to_string(),
+        confidence: 1.0,
+        factors: vec![],
     };
     assert_eq!(rec.reason(), "system is idle");
 
     let rec = Recommendation::EvictCold {
         tier: TierId::Ram,
         count: 4,
+        confidence: 1.0,
+        factors: vec![],
     };
     assert_eq!(rec.reason(), "eviction due to pressure");
 }
@@ -495,6 +533,8 @@ fn test_recommendation_serialization() {
     let rec = Recommendation::MoveToZram {
         chunk_id: ChunkId::from_data(b"test"),
         reason: "cold chunk".to_string(),
+        confidence: 0.85,
+        factors: vec!["low_pressure".to_string()],
     };
 
     let json = serde_json::to_string(&rec).expect("serialize");

@@ -7,7 +7,7 @@
 //!
 //! The provider is designed with graceful degradation: if DAMON is not available
 //! on the system (e.g., non-Linux, kernel not configured with CONFIG_DAMON), the
-//! provider reports `is_available() == false` and `sample()` returns an error.
+//! provider reports `sample()` returns an error.
 //!
 //! A [`SimulatedDamonProvider`] is also provided for deterministic testing
 //! without requiring DAMON support in the kernel.
@@ -313,7 +313,7 @@ impl HotnessProvider for DamonHotnessProvider {
             .count();
 
         let _ = self.event_emitter.hotness_sampled(
-            self.provider_name(),
+            self.name(),
             snapshot.samples.len(),
             hot_count,
             cold_count,
@@ -322,12 +322,8 @@ impl HotnessProvider for DamonHotnessProvider {
         Ok(snapshot)
     }
 
-    fn provider_name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "damon"
-    }
-
-    fn is_available(&self) -> bool {
-        self.check_availability()
     }
 }
 
@@ -438,7 +434,7 @@ impl HotnessProvider for SimulatedDamonProvider {
 
         // Emit hotness sampled event (fire-and-forget)
         let _ = self.event_emitter.hotness_sampled(
-            self.provider_name(),
+            self.name(),
             samples.len(),
             hot_count,
             cold_count,
@@ -450,12 +446,8 @@ impl HotnessProvider for SimulatedDamonProvider {
         })
     }
 
-    fn provider_name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "simulated_damon"
-    }
-
-    fn is_available(&self) -> bool {
-        true
     }
 }
 
@@ -489,7 +481,7 @@ mod tests {
 
         // In a test environment, DAMON is typically not available.
         // This test verifies the method doesn't panic and returns a boolean.
-        let available = provider.is_available();
+        let available = provider.check_availability();
         // We don't assert the exact value since it depends on the environment.
         // On most test systems, this will be false.
         assert!(available == true || available == false);
@@ -715,8 +707,8 @@ mod tests {
         };
         let provider = DamonHotnessProvider::new(config, test_time_provider(), test_emitter());
 
-        // is_available should return false
-        assert!(!provider.is_available());
+        // check_availability should return false
+        assert!(!provider.check_availability());
 
         // sample should return an error, not panic
         let result = provider.sample();
@@ -728,12 +720,11 @@ mod tests {
         let config = test_config();
         let provider = DamonHotnessProvider::new(config, test_time_provider(), test_emitter());
 
-        // Verify trait methods
-        assert_eq!(provider.provider_name(), "damon");
+        // Verify trait method
+        assert_eq!(provider.name(), "damon");
 
-        // When DAMON is unavailable, is_available returns false
-        // and sample returns an error
-        if !provider.is_available() {
+        // When DAMON is unavailable, sample returns an error
+        if !provider.check_availability() {
             assert!(provider.sample().is_err());
         }
     }
@@ -744,8 +735,7 @@ mod tests {
         let provider =
             SimulatedDamonProvider::new(config, test_time_provider(), test_emitter(), 42, 8);
 
-        assert!(provider.is_available());
-        assert_eq!(provider.provider_name(), "simulated_damon");
+        assert_eq!(provider.name(), "simulated_damon");
 
         let snapshot = provider.sample().unwrap();
         assert_eq!(snapshot.samples.len(), 8);

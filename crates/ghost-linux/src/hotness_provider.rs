@@ -124,7 +124,7 @@ impl HotnessProvider for MockHotnessProvider {
 
         // Emit hotness sampled event (fire-and-forget)
         let _ = self.event_emitter.hotness_sampled(
-            self.provider_name(),
+            self.name(),
             samples.len(),
             hot_count,
             cold_count,
@@ -136,12 +136,8 @@ impl HotnessProvider for MockHotnessProvider {
         })
     }
 
-    fn provider_name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "mock"
-    }
-
-    fn is_available(&self) -> bool {
-        true
     }
 }
 
@@ -211,17 +207,10 @@ mod tests {
     }
 
     #[test]
-    fn test_mock_provider_available() {
-        let config = MockHotnessConfig::default();
-        let provider = MockHotnessProvider::new(config, test_time_provider(), test_emitter());
-        assert!(provider.is_available());
-    }
-
-    #[test]
     fn test_mock_provider_name() {
         let config = MockHotnessConfig::default();
         let provider = MockHotnessProvider::new(config, test_time_provider(), test_emitter());
-        assert_eq!(provider.provider_name(), "mock");
+        assert_eq!(provider.name(), "mock");
     }
 
     #[test]

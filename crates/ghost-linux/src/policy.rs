@@ -30,6 +30,10 @@ use crate::tier_inventory::TierInventory;
 ///
 /// Recommendations are **advisory only** — they suggest what the caller
 /// *should* do, but the policy runtime never performs any action itself.
+///
+/// Each recommendation carries a `confidence` score (0.0–1.0) and a list
+/// of `factors` that contributed to the decision. Higher confidence means
+/// the engine is more certain about the recommendation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Recommendation {
     /// Promote a hot chunk to DRAM.
@@ -38,6 +42,10 @@ pub enum Recommendation {
         chunk_id: ChunkId,
         /// Human-readable reason for the recommendation.
         reason: String,
+        /// Confidence score (0.0–1.0).
+        confidence: f32,
+        /// Factors that contributed to this recommendation.
+        factors: Vec<String>,
     },
 
     /// Move a cold chunk to ZRAM.
@@ -46,6 +54,10 @@ pub enum Recommendation {
         chunk_id: ChunkId,
         /// Human-readable reason for the recommendation.
         reason: String,
+        /// Confidence score (0.0–1.0).
+        confidence: f32,
+        /// Factors that contributed to this recommendation.
+        factors: Vec<String>,
     },
 
     /// Move a cold chunk to disk swap.
@@ -54,12 +66,20 @@ pub enum Recommendation {
         chunk_id: ChunkId,
         /// Human-readable reason for the recommendation.
         reason: String,
+        /// Confidence score (0.0–1.0).
+        confidence: f32,
+        /// Factors that contributed to this recommendation.
+        factors: Vec<String>,
     },
 
     /// No action needed.
     NoAction {
         /// Human-readable reason for the recommendation.
         reason: String,
+        /// Confidence score (0.0–1.0).
+        confidence: f32,
+        /// Factors that contributed to this recommendation.
+        factors: Vec<String>,
     },
 
     /// Evict cold chunks from a tier.
@@ -68,6 +88,10 @@ pub enum Recommendation {
         tier: TierId,
         /// Number of chunks to evict.
         count: usize,
+        /// Confidence score (0.0–1.0).
+        confidence: f32,
+        /// Factors that contributed to this recommendation.
+        factors: Vec<String>,
     },
 
     /// Demote hot chunks from a tier to a target tier.
@@ -76,6 +100,10 @@ pub enum Recommendation {
         tier: TierId,
         /// Target tier.
         target: TierId,
+        /// Confidence score (0.0–1.0).
+        confidence: f32,
+        /// Factors that contributed to this recommendation.
+        factors: Vec<String>,
     },
 }
 
@@ -98,9 +126,33 @@ impl Recommendation {
             Recommendation::PromoteToDram { reason, .. } => reason,
             Recommendation::MoveToZram { reason, .. } => reason,
             Recommendation::MoveToDiskSwap { reason, .. } => reason,
-            Recommendation::NoAction { reason } => reason,
+            Recommendation::NoAction { reason, .. } => reason,
             Recommendation::EvictCold { .. } => "eviction due to pressure",
             Recommendation::DemoteHot { .. } => "demote hot chunks",
+        }
+    }
+
+    /// Get the confidence score for this recommendation.
+    pub fn confidence(&self) -> f32 {
+        match self {
+            Recommendation::PromoteToDram { confidence, .. } => *confidence,
+            Recommendation::MoveToZram { confidence, .. } => *confidence,
+            Recommendation::MoveToDiskSwap { confidence, .. } => *confidence,
+            Recommendation::NoAction { confidence, .. } => *confidence,
+            Recommendation::EvictCold { confidence, .. } => *confidence,
+            Recommendation::DemoteHot { confidence, .. } => *confidence,
+        }
+    }
+
+    /// Get the factors that contributed to this recommendation.
+    pub fn factors(&self) -> &[String] {
+        match self {
+            Recommendation::PromoteToDram { factors, .. } => factors,
+            Recommendation::MoveToZram { factors, .. } => factors,
+            Recommendation::MoveToDiskSwap { factors, .. } => factors,
+            Recommendation::NoAction { factors, .. } => factors,
+            Recommendation::EvictCold { factors, .. } => factors,
+            Recommendation::DemoteHot { factors, .. } => factors,
         }
     }
 }
@@ -108,23 +160,23 @@ impl Recommendation {
 impl std::fmt::Display for Recommendation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Recommendation::PromoteToDram { chunk_id, reason } => {
-                write!(f, "PromoteToDram({}): {}", chunk_id, reason)
+            Recommendation::PromoteToDram { chunk_id, reason, confidence, .. } => {
+                write!(f, "PromoteToDram({}): {} (confidence={:.2})", chunk_id, reason, confidence)
             }
-            Recommendation::MoveToZram { chunk_id, reason } => {
-                write!(f, "MoveToZram({}): {}", chunk_id, reason)
+            Recommendation::MoveToZram { chunk_id, reason, confidence, .. } => {
+                write!(f, "MoveToZram({}): {} (confidence={:.2})", chunk_id, reason, confidence)
             }
-            Recommendation::MoveToDiskSwap { chunk_id, reason } => {
-                write!(f, "MoveToDiskSwap({}): {}", chunk_id, reason)
+            Recommendation::MoveToDiskSwap { chunk_id, reason, confidence, .. } => {
+                write!(f, "MoveToDiskSwap({}): {} (confidence={:.2})", chunk_id, reason, confidence)
             }
-            Recommendation::NoAction { reason } => {
-                write!(f, "NoAction: {}", reason)
+            Recommendation::NoAction { reason, confidence, .. } => {
+                write!(f, "NoAction: {} (confidence={:.2})", reason, confidence)
             }
-            Recommendation::EvictCold { tier, count } => {
-                write!(f, "EvictCold({:?}, {})", tier, count)
+            Recommendation::EvictCold { tier, count, confidence, .. } => {
+                write!(f, "EvictCold({:?}, {}) (confidence={:.2})", tier, count, confidence)
             }
-            Recommendation::DemoteHot { tier, target } => {
-                write!(f, "DemoteHot({:?} -> {:?})", tier, target)
+            Recommendation::DemoteHot { tier, target, confidence, .. } => {
+                write!(f, "DemoteHot({:?} -> {:?}) (confidence={:.2})", tier, target, confidence)
             }
         }
     }
@@ -305,6 +357,8 @@ impl PolicyRuntime {
             swap_utilization,
             zram_utilization,
             io_pressure,
+            hotness_summary: None,
+            hotness_confidence: None,
         }
     }
 }
@@ -414,6 +468,8 @@ mod tests {
     fn test_recommendation_display() {
         let rec = Recommendation::NoAction {
             reason: "system idle".to_string(),
+            confidence: 1.0,
+            factors: vec![],
         };
         assert!(rec.to_string().contains("NoAction"));
         assert!(rec.to_string().contains("system idle"));
@@ -424,6 +480,8 @@ mod tests {
         let rec = Recommendation::MoveToZram {
             chunk_id: ChunkId::from_data(b"test"),
             reason: "cold chunk".to_string(),
+            confidence: 0.8,
+            factors: vec![],
         };
         assert_eq!(rec.kind(), "move_to_zram");
     }
@@ -432,8 +490,31 @@ mod tests {
     fn test_recommendation_reason() {
         let rec = Recommendation::NoAction {
             reason: "system idle".to_string(),
+            confidence: 1.0,
+            factors: vec![],
         };
         assert_eq!(rec.reason(), "system idle");
+    }
+
+    #[test]
+    fn test_recommendation_confidence() {
+        let rec = Recommendation::NoAction {
+            reason: "test".to_string(),
+            confidence: 0.75,
+            factors: vec![],
+        };
+        assert!((rec.confidence() - 0.75).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_recommendation_factors() {
+        let rec = Recommendation::NoAction {
+            reason: "test".to_string(),
+            confidence: 1.0,
+            factors: vec!["pressure".to_string(), "hotness".to_string()],
+        };
+        assert_eq!(rec.factors().len(), 2);
+        assert_eq!(rec.factors()[0], "pressure");
     }
 
     #[test]

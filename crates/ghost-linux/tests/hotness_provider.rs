@@ -4,7 +4,6 @@
 //! - Deterministic output from MockHotnessProvider
 //! - Event emission on sample
 //! - Temperature classification correctness
-//! - Availability checks
 //! - HotnessTracker integration with provider
 //! - Record/replay of hotness streams
 
@@ -154,11 +153,10 @@ fn test_mock_provider_temperature_classification() {
 }
 
 #[test]
-fn test_mock_provider_availability() {
+fn test_mock_provider_name() {
     let config = MockHotnessConfig::default();
     let provider = MockHotnessProvider::new(config, test_time_provider(), test_emitter());
-    assert!(provider.is_available(), "Mock provider should always be available");
-    assert_eq!(provider.provider_name(), "mock");
+    assert_eq!(provider.name(), "mock");
 }
 
 #[test]

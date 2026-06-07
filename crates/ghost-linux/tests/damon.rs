@@ -39,7 +39,10 @@ fn test_damon_availability() {
 
     // This test verifies the method doesn't panic.
     // In most test environments, DAMON won't be available.
-    let _available = provider.is_available();
+    // We can't call check_availability directly (it's private), but we can
+    // verify that sample() returns an error when DAMON is unavailable.
+    let result = provider.sample();
+    assert!(result.is_err(), "DAMON should be unavailable in test env");
 }
 
 /// Verify hot/warm/cold/frozen thresholds.
@@ -53,9 +56,7 @@ fn test_temperature_classification() {
     };
     let provider = DamonHotnessProvider::new(config, test_time_provider(), test_emitter());
 
-    // Test via the classify_temperature method indirectly through snapshot
-    // We can't call classify_temperature directly (it's private), but we can
-    // verify the config is stored correctly
+    // Verify the config is stored correctly
     assert_eq!(provider.state().regions_count, 0);
 }
 
@@ -132,9 +133,6 @@ fn test_graceful_degradation() {
     };
     let provider = DamonHotnessProvider::new(config, test_time_provider(), test_emitter());
 
-    // is_available should return false
-    assert!(!provider.is_available());
-
     // sample should return an error, not panic
     let result = provider.sample();
     assert!(result.is_err());
@@ -146,13 +144,11 @@ fn test_hotness_provider_trait() {
     let config = test_config();
     let provider = DamonHotnessProvider::new(config, test_time_provider(), test_emitter());
 
-    // Verify trait methods
-    assert_eq!(provider.provider_name(), "damon");
+    // Verify trait method
+    assert_eq!(provider.name(), "damon");
 
-    // When DAMON is unavailable, is_available returns false
-    if !provider.is_available() {
-        assert!(provider.sample().is_err());
-    }
+    // When DAMON is unavailable, sample returns an error
+    assert!(provider.sample().is_err());
 }
 
 /// Verify SimulatedDamonProvider is always available.
@@ -162,8 +158,7 @@ fn test_simulated_always_available() {
     let provider =
         SimulatedDamonProvider::new(config, test_time_provider(), test_emitter(), 42, 8);
 
-    assert!(provider.is_available());
-    assert_eq!(provider.provider_name(), "simulated_damon");
+    assert_eq!(provider.name(), "simulated_damon");
 
     let snapshot = provider.sample().unwrap();
     assert_eq!(snapshot.samples.len(), 8);

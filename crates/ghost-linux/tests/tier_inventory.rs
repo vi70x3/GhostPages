@@ -361,6 +361,10 @@ fn test_metrics_update() {
         pressure: ghost_core::state::PressureState::new(),
         health: ghost_core::events::BackendHealth::Healthy,
         last_updated: 1_700_000_000,
+        hot_bytes: 0,
+        warm_bytes: 0,
+        cold_bytes: 0,
+        frozen_bytes: 0,
     };
 
     metrics::update_tier(&m, &info);

@@ -15,6 +15,47 @@ use ghost_core::types::TierId;
 
 use crate::policy::Recommendation;
 
+// ─── Stability Configuration ────────────────────────────────────────────────────
+
+/// Configuration for stability mechanisms that prevent recommendation flapping.
+///
+/// These parameters control hysteresis, cooldowns, and confidence thresholds
+/// to ensure the policy engine does not generate excessive or oscillating
+/// recommendations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StabilityConfig {
+    /// Minimum time between recommendations for the same region (seconds).
+    pub recommendation_cooldown_secs: u64,
+
+    /// Temperature must be stable for this many consecutive samples before changing recommendation.
+    pub temperature_stability_window: usize,
+
+    /// Hysteresis margin: temperature must exceed threshold by this much to trigger change.
+    pub hysteresis_margin: f32,
+
+    /// Maximum recommendations per evaluation cycle.
+    pub max_recommendations_per_cycle: usize,
+
+    /// Minimum confidence to emit a recommendation.
+    pub min_confidence_threshold: f32,
+
+    /// Cooldown after a recommendation is suppressed (seconds).
+    pub suppression_cooldown_secs: u64,
+}
+
+impl Default for StabilityConfig {
+    fn default() -> Self {
+        Self {
+            recommendation_cooldown_secs: 30,
+            temperature_stability_window: 3,
+            hysteresis_margin: 0.1,
+            max_recommendations_per_cycle: 10,
+            min_confidence_threshold: 0.3,
+            suppression_cooldown_secs: 60,
+        }
+    }
+}
+
 // ─── System State ────────────────────────────────────────────────────────────────
 
 /// A point-in-time snapshot of system pressure and utilization.

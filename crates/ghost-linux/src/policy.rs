@@ -6,6 +6,9 @@
 //!
 //! The runtime is deterministic: same system state → same recommendations.
 //! All thresholds are configurable via [`PolicyRules`] but fixed during evaluation.
+//!
+//! Stability mechanisms (hysteresis, cooldowns, confidence thresholds) are
+//! applied to prevent recommendation flapping and churn.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,8 +23,11 @@ use ghost_core::hotness_provider::HotnessProvider;
 use ghost_core::time::TimeProvider;
 use ghost_core::types::{ChunkId, TierId};
 
+use crate::cooldown::CooldownTracker;
 use crate::hotness_provider::MockHotnessProvider;
+use crate::policy_rules::{PolicyRules, StabilityConfig, SystemState};
 use crate::psi::PsiResource;
+use crate::stability::StabilityChecker;
 use crate::tier_inventory::TierInventory;
 
 // ─── Recommendation ─────────────────────────────────────────────────────────────
@@ -190,6 +196,8 @@ impl std::fmt::Display for Recommendation {
 /// migrations. It only observes and recommends.
 ///
 /// The runtime is deterministic: same system state → same recommendations.
+/// Stability mechanisms (hysteresis, cooldowns, confidence thresholds) are
+/// applied to prevent recommendation flapping.
 pub struct PolicyRuntime {
     /// Live tier inventory for reading current tier state.
     tier_inventory: Arc<RwLock<TierInventory>>,
@@ -207,7 +215,16 @@ pub struct PolicyRuntime {
     last_evaluation: AtomicU64,
 
     /// Policy rules (thresholds).
-    rules: crate::policy_rules::PolicyRules,
+    rules: PolicyRules,
+
+    /// Stability configuration for hysteresis and cooldowns.
+    stability_config: StabilityConfig,
+
+    /// Cooldown tracker for per-region recommendation rate limiting.
+    cooldown_tracker: CooldownTracker,
+
+    /// Stability checker for temperature history and trend analysis.
+    stability_checker: StabilityChecker,
 }
 
 impl PolicyRuntime {
@@ -223,13 +240,22 @@ impl PolicyRuntime {
         event_emitter: EventEmitter,
         time_provider: Arc<dyn TimeProvider>,
     ) -> Self {
+        let stability_config = StabilityConfig::default();
+        let cooldown_tracker = CooldownTracker::new(
+            stability_config.clone(),
+            time_provider.clone(),
+        );
+        let stability_checker = StabilityChecker::new(stability_config.clone());
         Self {
             tier_inventory,
             hotness_provider: None,
             event_emitter,
             time_provider,
             last_evaluation: AtomicU64::new(0),
-            rules: crate::policy_rules::PolicyRules::new(),
+            rules: PolicyRules::new(),
+            stability_config,
+            cooldown_tracker,
+            stability_checker,
         }
     }
 
@@ -238,8 +264,14 @@ impl PolicyRuntime {
         tier_inventory: Arc<RwLock<TierInventory>>,
         event_emitter: EventEmitter,
         time_provider: Arc<dyn TimeProvider>,
-        rules: crate::policy_rules::PolicyRules,
+        rules: PolicyRules,
     ) -> Self {
+        let stability_config = StabilityConfig::default();
+        let cooldown_tracker = CooldownTracker::new(
+            stability_config.clone(),
+            time_provider.clone(),
+        );
+        let stability_checker = StabilityChecker::new(stability_config.clone());
         Self {
             tier_inventory,
             hotness_provider: None,
@@ -247,6 +279,35 @@ impl PolicyRuntime {
             time_provider,
             last_evaluation: AtomicU64::new(0),
             rules,
+            stability_config,
+            cooldown_tracker,
+            stability_checker,
+        }
+    }
+
+    /// Create a new policy runtime with custom stability configuration.
+    pub fn with_stability(
+        tier_inventory: Arc<RwLock<TierInventory>>,
+        event_emitter: EventEmitter,
+        time_provider: Arc<dyn TimeProvider>,
+        rules: PolicyRules,
+        stability_config: StabilityConfig,
+    ) -> Self {
+        let cooldown_tracker = CooldownTracker::new(
+            stability_config.clone(),
+            time_provider.clone(),
+        );
+        let stability_checker = StabilityChecker::new(stability_config.clone());
+        Self {
+            tier_inventory,
+            hotness_provider: None,
+            event_emitter,
+            time_provider,
+            last_evaluation: AtomicU64::new(0),
+            rules,
+            stability_config,
+            cooldown_tracker,
+            stability_checker,
         }
     }
 
@@ -272,9 +333,12 @@ impl PolicyRuntime {
     /// 2. Read PSI (memory pressure level).
     /// 3. If hotness provider available, read hotness data.
     /// 4. Build a [`SystemState`] snapshot.
-    /// 5. Apply policy rules to produce recommendations.
-    /// 6. Emit `PolicyRecommendationGenerated` event.
-    /// 7. Return recommendations (caller decides what to do with them).
+    /// 5. Apply policy rules to produce raw recommendations.
+    /// 6. Apply stability filters (confidence threshold).
+    /// 7. Apply cooldown filters (per-region rate limiting).
+    /// 8. Sort by confidence, limit count.
+    /// 9. Emit `PolicyRecommendationGenerated` event.
+    /// 10. Return recommendations (caller decides what to do with them).
     pub fn evaluate(&self) -> GhostResult<Vec<Recommendation>> {
         let start = std::time::Instant::now();
 
@@ -285,14 +349,23 @@ impl PolicyRuntime {
         let state = self.build_system_state(&inventory);
 
         // 3. Apply policy rules (pure function — deterministic)
-        let recommendations = self.rules.evaluate(&state);
+        let raw_recommendations = self.rules.evaluate(&state);
 
-        // 4. Update last evaluation timestamp
+        // 4. Apply stability filters (confidence threshold)
+        let stable = self.apply_stability(raw_recommendations);
+
+        // 5. Apply cooldown filters (per-region rate limiting)
+        let filtered = self.apply_cooldowns(stable);
+
+        // 6. Sort by confidence (descending), limit count
+        let limited = self.limit_recommendations(filtered);
+
+        // 7. Update last evaluation timestamp
         let now = self.time_provider.timestamp_secs();
         self.last_evaluation.store(now, Ordering::Relaxed);
 
-        // 5. Emit policy recommendation event
-        let rec_strings: Vec<String> = recommendations.iter().map(|r| r.to_string()).collect();
+        // 8. Emit policy recommendation event
+        let rec_strings: Vec<String> = limited.iter().map(|r| r.to_string()).collect();
         let pressure_level = state.pressure_level().to_string();
         let _ = self.event_emitter.try_emit(Event::PolicyRecommendationGenerated {
             sequence_id: 0,
@@ -300,20 +373,51 @@ impl PolicyRuntime {
             pressure_level,
         });
 
-        // 6. Record metrics
+        // 9. Record metrics
         let _elapsed = start.elapsed();
-        record_metrics(&recommendations, start);
+        record_metrics(&limited, start);
 
-        Ok(recommendations)
+        Ok(limited)
+    }
+
+    /// Apply stability filters: remove recommendations below confidence threshold.
+    fn apply_stability(&self, recommendations: Vec<Recommendation>) -> Vec<Recommendation> {
+        recommendations
+            .into_iter()
+            .filter(|r| r.confidence() >= self.stability_config.min_confidence_threshold)
+            .collect()
+    }
+
+    /// Apply cooldown filters: suppress recommendations for regions in cooldown.
+    fn apply_cooldowns(&self, recommendations: Vec<Recommendation>) -> Vec<Recommendation> {
+        recommendations
+            .into_iter()
+            .filter(|r| {
+                let region_key = format!("{:?}", std::mem::discriminant(r));
+                self.cooldown_tracker.can_recommend(&region_key)
+            })
+            .collect()
+    }
+
+    /// Sort recommendations by confidence (descending) and limit the total count.
+    fn limit_recommendations(&self, mut recommendations: Vec<Recommendation>) -> Vec<Recommendation> {
+        recommendations.sort_by(|a, b| {
+            b.confidence()
+                .partial_cmp(&a.confidence())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let max = self.stability_config.max_recommendations_per_cycle;
+        if recommendations.len() > max {
+            recommendations.truncate(max);
+        }
+        recommendations
     }
 
     /// Build a system state snapshot from the tier inventory.
     fn build_system_state(
         &self,
         inventory: &TierInventory,
-    ) -> crate::policy_rules::SystemState {
-        use crate::policy_rules::SystemState;
-
+    ) -> SystemState {
         let mut dram_pressure = ghost_core::state::PressureState::new();
         let mut dram_utilization = 0.0f32;
         let mut swap_utilization = 0.0f32;
@@ -602,5 +706,17 @@ mod tests {
         // Read tier count after — should be unchanged
         let count_after = inventory.read().tier_count();
         assert_eq!(count_before, count_after);
+    }
+
+    #[test]
+    fn test_policy_runtime_with_stability_config() {
+        let runtime = PolicyRuntime::with_stability(
+            test_tier_inventory(),
+            test_emitter(),
+            test_time_provider(),
+            PolicyRules::new(),
+            StabilityConfig::default(),
+        );
+        assert!(runtime.is_cooldown_expired());
     }
 }

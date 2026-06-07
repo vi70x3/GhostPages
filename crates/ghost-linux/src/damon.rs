@@ -136,13 +136,13 @@ impl DamonHotnessProvider {
     ///
     /// Returns `true` if the DAMON sysfs directory exists and is readable.
     #[cfg(target_os = "linux")]
-    fn check_availability(&self) -> bool {
+    pub fn check_availability(&self) -> bool {
         let path = &self.config.sysfs_path;
         path.exists() && path.is_dir()
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn check_availability(&self) -> bool {
+    pub fn check_availability(&self) -> bool {
         false
     }
 

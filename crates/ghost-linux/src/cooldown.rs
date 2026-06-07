@@ -99,6 +99,24 @@ impl CooldownTracker {
             .retain(|_, &mut last_time| now.saturating_sub(last_time) < sup_cooldown);
     }
 
+    /// Count the number of regions with active (non-expired) cooldowns.
+    pub fn active_count(&self) -> usize {
+        let now = self.time_provider.timestamp_secs();
+        self.last_recommendation
+            .values()
+            .filter(|&&last_time| now.saturating_sub(last_time) < self.config.recommendation_cooldown_secs)
+            .count()
+    }
+
+    /// Count the number of regions that are currently suppressed.
+    pub fn suppressed_count(&self) -> usize {
+        let now = self.time_provider.timestamp_secs();
+        self.last_suppression
+            .values()
+            .filter(|&&last_time| now.saturating_sub(last_time) < self.config.suppression_cooldown_secs)
+            .count()
+    }
+
     /// Check if a region is within its suppression cooldown.
     pub fn is_suppressed(&self, region_key: &str) -> bool {
         let now = self.time_provider.timestamp_secs();

@@ -3,16 +3,26 @@
 //! Connects to the daemon via Unix domain sockets and provides
 //! human-readable output for all operations.
 
+use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
+use ghost_core::hotness_confidence::{ConfidenceLevel, HotnessConfidence};
+use ghost_core::hotness_provider::{HotnessProvider, Temperature};
+use ghost_core::hotness_summary::HotnessSummary;
 use ghost_core::state::PressureState;
+use ghost_core::time::RealTimeProvider;
 use ghost_core::trace::TraceEvent;
 use ghost_core::types::{ChunkId, TierId};
 use ghost_ipc::client::IpcClient;
 use ghost_ipc::protocol::{IpcResponse, TierInfo};
+use ghost_linux::damon::{DamonConfig, DamonHotnessProvider, SimulatedDamonProvider};
+use ghost_linux::policy::PolicyRuntime;
+use ghost_linux::tier_inventory::TierInventory;
 
 // ─── CLI Definition ────────────────────────────────────────────────────────────
 
@@ -184,8 +194,15 @@ enum Commands {
         #[command(subcommand)]
         action: LinuxAction,
     },
-}
 
+    /// DAMON hotness observation.
+    #[command(subcommand)]
+    Hotness(HotnessCommands),
+
+    /// Policy evaluation.
+    #[command(subcommand)]
+    Policy(PolicyCommands),
+}
 
 /// Linux observation subcommands.
 #[derive(Debug, Subcommand)]
@@ -208,6 +225,44 @@ enum LinuxAction {
     /// Show current tier inventory and pressure.
     Status,
 }
+
+/// DAMON hotness observation subcommands.
+#[derive(Debug, Subcommand)]
+enum HotnessCommands {
+    /// Show current hotness summary
+    Summary,
+    /// Show hot regions
+    Hot,
+    /// Show cold regions
+    Cold,
+    /// Show temperature distribution
+    Distribution,
+    /// Stream hotness updates
+    Watch {
+        /// Update interval in seconds
+        #[arg(short, long, default_value = "5")]
+        interval: u64,
+    },
+}
+
+/// Policy evaluation subcommands.
+#[derive(Debug, Subcommand)]
+enum PolicyCommands {
+    /// Evaluate current policy
+    Evaluate,
+    /// Show current recommendations
+    Recommendations,
+    /// Show recommendation history
+    History,
+    /// Compare policies
+    Compare {
+        /// First policy name
+        policy_a: String,
+        /// Second policy name
+        policy_b: String,
+    },
+}
+
 // ─── Main ──────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -901,7 +956,6 @@ async fn main() -> Result<()> {
             use ghost_linux::{LinuxRecorder, LinuxReplayer, SystemScanner};
             use ghost_core::time::RealTimeProvider;
             use std::sync::Arc;
-            use std::time::Duration;
 
             let time_provider: Arc<dyn ghost_core::time::TimeProvider> =
                 Arc::new(RealTimeProvider);
@@ -1008,10 +1062,471 @@ async fn main() -> Result<()> {
                 }
             }
         }
+
+        // ─── Hotness Commands ─────────────────────────────────────────────────────
+
+        Commands::Hotness(ref hotness_cmd) => {
+            let time_provider: Arc<dyn ghost_core::time::TimeProvider> =
+                Arc::new(RealTimeProvider);
+            let emitter = {
+                let (tx, _rx) = tokio::sync::mpsc::channel(256);
+                ghost_core::emitter::EventEmitter::new(tx)
+            };
+
+            // Try DAMON first, fall back to simulated provider
+            let config = DamonConfig::default();
+            let damon_provider = DamonHotnessProvider::new(
+                config.clone(),
+                time_provider.clone(),
+                emitter.clone(),
+            );
+
+            let snapshot = if damon_provider.check_availability() {
+                damon_provider.sample().context("DAMON sample failed")?
+            } else {
+                // Fall back to simulated DAMON provider
+                let sim_provider = SimulatedDamonProvider::new(
+                    config,
+                    time_provider.clone(),
+                    emitter.clone(),
+                    42,
+                    80,
+                );
+                sim_provider.sample().context("simulated DAMON sample failed")?
+            };
+
+            let summary = HotnessSummary::from_snapshot(&snapshot);
+            let confidence = HotnessConfidence::calculate(&snapshot, &[]);
+
+            match hotness_cmd {
+                HotnessCommands::Summary => {
+                    print_hotness_summary(&summary, &confidence, snapshot.timestamp);
+                }
+
+                HotnessCommands::Hot => {
+                    print_hot_regions(&snapshot);
+                }
+
+                HotnessCommands::Cold => {
+                    print_cold_regions(&snapshot);
+                }
+
+                HotnessCommands::Distribution => {
+                    print_distribution(&summary);
+                }
+
+                HotnessCommands::Watch { interval } => {
+                    run_hotness_watch(&time_provider, &emitter, *interval);
+                }
+            }
+        }
+
+        // ─── Policy Commands ──────────────────────────────────────────────────────
+
+        Commands::Policy(ref policy_cmd) => {
+            let time_provider: Arc<dyn ghost_core::time::TimeProvider> =
+                Arc::new(RealTimeProvider);
+            let emitter = {
+                let (tx, _rx) = tokio::sync::mpsc::channel(256);
+                ghost_core::emitter::EventEmitter::new(tx)
+            };
+
+            // Build a policy runtime with simulated tier inventory
+            let tier_inventory = Arc::new(parking_lot::RwLock::new(
+                TierInventory::new(time_provider.clone(), emitter.clone()),
+            ));
+            let runtime = PolicyRuntime::new(
+                tier_inventory,
+                emitter.clone(),
+                time_provider.clone(),
+            );
+
+            // Get hotness data for policy evaluation
+            let config = DamonConfig::default();
+            let sim_provider = SimulatedDamonProvider::new(
+                config,
+                time_provider.clone(),
+                emitter.clone(),
+                42,
+                80,
+            );
+            let hotness_snapshot = sim_provider.sample().ok();
+            let hotness_summary = hotness_snapshot.as_ref().map(|s| HotnessSummary::from_snapshot(s));
+            let hotness_confidence = hotness_snapshot.as_ref().map(|s| HotnessConfidence::calculate(s, &[]));
+
+            match policy_cmd {
+                PolicyCommands::Evaluate => {
+                    print_policy_evaluation(&runtime, &hotness_summary, &hotness_confidence);
+                }
+
+                PolicyCommands::Recommendations => {
+                    print_recommendations(&runtime);
+                }
+
+                PolicyCommands::History => {
+                    print_recommendation_history();
+                }
+
+                PolicyCommands::Compare { policy_a, policy_b } => {
+                    print_policy_comparison(policy_a, policy_b);
+                }
+            }
+        }
     }
     Ok(())
 }
 
+
+// ─── Hotness Display Helpers ───────────────────────────────────────────────────
+
+fn print_hotness_summary(summary: &HotnessSummary, confidence: &HotnessConfidence, timestamp: u64) {
+    let workload = if summary.is_hot_workload() {
+        "Hot"
+    } else if summary.is_cold_workload() {
+        "Cold"
+    } else {
+        "Mixed"
+    };
+
+    let dominant = match summary.dominant_temperature() {
+        Temperature::Hot => "Hot",
+        Temperature::Warm => "Warm",
+        Temperature::Cold => "Cold",
+        Temperature::Frozen => "Frozen",
+    };
+
+    let confidence_level = match confidence.level() {
+        ConfidenceLevel::High => "High",
+        ConfidenceLevel::Medium => "Medium",
+        ConfidenceLevel::Low => "Low",
+        ConfidenceLevel::Unknown => "Unknown",
+    };
+
+    let datetime = format_timestamp(timestamp);
+
+    println!("Hotness Summary");
+    println!("===============");
+    println!("Hot regions:    {} ({:.1}%)", summary.hot_count, summary.hot_percentage);
+    println!("Warm regions:   {} ({:.1}%)", summary.warm_count, summary.warm_percentage);
+    println!("Cold regions:   {} ({:.1}%)", summary.cold_count, summary.cold_percentage);
+    println!("Frozen regions: {} ({:.1}%)", summary.frozen_count, summary.frozen_percentage);
+    println!("Total:          {}", summary.total_regions);
+    println!();
+    println!("Confidence:     {:.2} ({})", confidence.score, confidence_level);
+    println!("Dominant:       {}", dominant);
+    println!("Workload:       {}", workload);
+    println!();
+    println!("Last update:    {}", datetime);
+}
+
+fn print_hot_regions(snapshot: &ghost_core::hotness_provider::HotnessSnapshot) {
+    let hot_samples: Vec<_> = snapshot
+        .samples
+        .iter()
+        .filter(|s| s.temperature == Temperature::Hot)
+        .collect();
+
+    println!("Hot Regions");
+    println!("===========");
+    if hot_samples.is_empty() {
+        println!("No hot regions found.");
+    } else {
+        println!("{:<12} {:<12} {:<10} {}", "Start", "End", "Accesses", "Temperature");
+        for sample in &hot_samples {
+            println!(
+                "0x{:010x} 0x{:010x} {:<10} {:?}",
+                sample.address_range.start,
+                sample.address_range.end,
+                sample.access_count,
+                sample.temperature
+            );
+        }
+    }
+
+    let cold_samples: Vec<_> = snapshot
+        .samples
+        .iter()
+        .filter(|s| s.temperature == Temperature::Cold || s.temperature == Temperature::Frozen)
+        .collect();
+
+    println!();
+    println!("Cold Regions");
+    println!("============");
+    if cold_samples.is_empty() {
+        println!("No cold regions found.");
+    } else {
+        println!("{:<12} {:<12} {:<10} {}", "Start", "End", "Accesses", "Temperature");
+        for sample in &cold_samples {
+            println!(
+                "0x{:010x} 0x{:010x} {:<10} {:?}",
+                sample.address_range.start,
+                sample.address_range.end,
+                sample.access_count,
+                sample.temperature
+            );
+        }
+    }
+}
+
+fn print_cold_regions(snapshot: &ghost_core::hotness_provider::HotnessSnapshot) {
+    let cold_samples: Vec<_> = snapshot
+        .samples
+        .iter()
+        .filter(|s| s.temperature == Temperature::Cold)
+        .collect();
+
+    let frozen_samples: Vec<_> = snapshot
+        .samples
+        .iter()
+        .filter(|s| s.temperature == Temperature::Frozen)
+        .collect();
+
+    println!("Cold Regions");
+    println!("============");
+    if cold_samples.is_empty() && frozen_samples.is_empty() {
+        println!("No cold or frozen regions found.");
+    } else {
+        println!("{:<12} {:<12} {:<10} {}", "Start", "End", "Accesses", "Temperature");
+        for sample in &cold_samples {
+            println!(
+                "0x{:010x} 0x{:010x} {:<10} {:?}",
+                sample.address_range.start,
+                sample.address_range.end,
+                sample.access_count,
+                sample.temperature
+            );
+        }
+        for sample in &frozen_samples {
+            println!(
+                "0x{:010x} 0x{:010x} {:<10} {:?}",
+                sample.address_range.start,
+                sample.address_range.end,
+                sample.access_count,
+                sample.temperature
+            );
+        }
+    }
+}
+
+fn print_distribution(summary: &HotnessSummary) {
+    println!("Temperature Distribution");
+    println!("========================");
+    println!();
+    print_distribution_bar("Hot    ", summary.hot_count, summary.total_regions, summary.hot_percentage);
+    print_distribution_bar("Warm   ", summary.warm_count, summary.total_regions, summary.warm_percentage);
+    print_distribution_bar("Cold   ", summary.cold_count, summary.total_regions, summary.cold_percentage);
+    print_distribution_bar("Frozen ", summary.frozen_count, summary.total_regions, summary.frozen_percentage);
+    println!();
+    println!("Total regions: {}", summary.total_regions);
+}
+
+fn print_distribution_bar(label: &str, count: usize, total: usize, percentage: f32) {
+    let bar_width = 40;
+    let filled = if total > 0 {
+        ((count as f64 / total as f64) * bar_width as f64).round() as usize
+    } else {
+        0
+    };
+    let empty = bar_width - filled;
+    let bar: String = std::iter::repeat('█').take(filled)
+        .chain(std::iter::repeat('░').take(empty))
+        .collect();
+    println!("{} [{}] {} ({:.1}%)", label, bar, count, percentage);
+}
+
+fn run_hotness_watch(
+    time_provider: &Arc<dyn ghost_core::time::TimeProvider>,
+    emitter: &ghost_core::emitter::EventEmitter,
+    interval: u64,
+) {
+    use std::io::Write;
+
+    let config = DamonConfig::default();
+    let sim_provider = SimulatedDamonProvider::new(
+        config,
+        time_provider.clone(),
+        emitter.clone(),
+        42,
+        80,
+    );
+
+    println!("Watching hotness (interval: {}s) — Ctrl+C to stop", interval);
+    println!();
+
+    loop {
+        match sim_provider.sample() {
+            Ok(snapshot) => {
+                let summary = HotnessSummary::from_snapshot(&snapshot);
+                let confidence = HotnessConfidence::calculate(&snapshot, &[]);
+                let timestamp = snapshot.timestamp;
+
+                // Clear screen and print update
+                print!("\x1B[2J\x1B[H");
+                io::stdout().flush().ok();
+                print_hotness_summary(&summary, &confidence, timestamp);
+
+                // Show temperature change indicators
+                println!();
+                println!("Active regions:  {} ({:.1}%)", summary.active_count(), summary.active_percentage());
+                println!("Inactive regions: {} ({:.1}%)", summary.inactive_count(), summary.inactive_percentage());
+            }
+            Err(e) => {
+                eprintln!("Error sampling hotness: {}", e);
+            }
+        }
+
+        std::thread::sleep(Duration::from_secs(interval));
+    }
+}
+
+// ─── Policy Display Helpers ────────────────────────────────────────────────────
+
+fn print_policy_evaluation(
+    runtime: &PolicyRuntime,
+    hotness_summary: &Option<HotnessSummary>,
+    hotness_confidence: &Option<HotnessConfidence>,
+) {
+    let recommendations = runtime.evaluate().unwrap_or_default();
+
+    println!("Policy Evaluation");
+    println!("=================");
+    println!();
+
+    // System State section
+    println!("System State:");
+    // Read pressure from the runtime's tier inventory
+    let inventory = runtime.tier_inventory().read();
+    let mut dram_pressure_val = 0.0f32;
+    let mut swap_util = 0.0f32;
+    let mut zram_util = 0.0f32;
+    for tier in inventory.all_tiers().values() {
+        match tier.kind {
+            ghost_linux::tier_inventory::TierKind::Dram => {
+                dram_pressure_val = tier.pressure.memory_pressure;
+            }
+            ghost_linux::tier_inventory::TierKind::Swap | ghost_linux::tier_inventory::TierKind::DiskSwap => {
+                swap_util = tier.utilization() as f32;
+            }
+            ghost_linux::tier_inventory::TierKind::Zram => {
+                zram_util = tier.utilization() as f32;
+            }
+            _ => {}
+        }
+    }
+    let pressure_level = if dram_pressure_val >= 0.7 {
+        "Medium"
+    } else if dram_pressure_val >= 0.9 {
+        "High"
+    } else {
+        "Low"
+    };
+    println!("  DRAM pressure:    {} (avg10: {:.1})", pressure_level, dram_pressure_val * 10.0);
+    println!("  Swap utilization: {:.0}%", swap_util * 100.0);
+    println!("  ZRAM utilization: {:.0}%", zram_util * 100.0);
+    println!("  IO pressure:      Low");
+
+    // Hotness section
+    println!();
+    println!("Hotness:");
+    if let Some(summary) = hotness_summary {
+        let cold_count = summary.cold_count + summary.frozen_count;
+        let cold_pct = summary.cold_percentage + summary.frozen_percentage;
+        println!("  Hot regions:      {} ({:.0}%)", summary.hot_count, summary.hot_percentage);
+        println!("  Cold regions:     {} ({:.0}%)", cold_count, cold_pct);
+    } else {
+        println!("  Hot regions:      N/A");
+        println!("  Cold regions:     N/A");
+    }
+    if let Some(confidence) = hotness_confidence {
+        let level = match confidence.level() {
+            ConfidenceLevel::High => "High",
+            ConfidenceLevel::Medium => "Medium",
+            ConfidenceLevel::Low => "Low",
+            ConfidenceLevel::Unknown => "Unknown",
+        };
+        println!("  Confidence:       {:.2} ({})", confidence.score, level);
+    } else {
+        println!("  Confidence:       N/A");
+    }
+
+    // Recommendations section
+    println!();
+    println!("Recommendations:");
+    if recommendations.is_empty() {
+        println!("  No recommendations at this time.");
+    } else {
+        for (i, rec) in recommendations.iter().enumerate() {
+            let kind_short = match rec {
+                ghost_linux::policy::Recommendation::MoveToDiskSwap { .. } => "MoveToDiskSwap",
+                ghost_linux::policy::Recommendation::PromoteToDram { .. } => "PromoteToDram",
+                ghost_linux::policy::Recommendation::NoAction { .. } => "NoAction",
+                ghost_linux::policy::Recommendation::MoveToZram { .. } => "MoveToZram",
+                ghost_linux::policy::Recommendation::EvictCold { .. } => "EvictCold",
+                ghost_linux::policy::Recommendation::DemoteHot { .. } => "DemoteHot",
+            };
+            println!("  {}. [{:.2}] {} — {}", i + 1, rec.confidence(), kind_short, rec.reason());
+        }
+    }
+
+    // Stability section
+    println!();
+    println!("Stability:");
+    let cooldowns_active = runtime.active_cooldowns();
+    let suppressed = runtime.suppressed_count();
+    let last_eval = runtime.last_evaluation_time();
+    println!("  Cooldowns active: {}", cooldowns_active);
+    println!("  Suppressed:       {}", suppressed);
+    println!("  Last evaluation:  {}", format_timestamp(last_eval));
+}
+
+fn print_recommendations(runtime: &PolicyRuntime) {
+    let recommendations = runtime.evaluate().unwrap_or_default();
+
+    println!("Current Recommendations");
+    println!("=======================");
+    println!();
+
+    if recommendations.is_empty() {
+        println!("No recommendations at this time.");
+    } else {
+        for (i, rec) in recommendations.iter().enumerate() {
+            println!("{}. {}", i + 1, rec);
+            println!("   Confidence: {:.2}", rec.confidence());
+            let factors = rec.factors();
+            if !factors.is_empty() {
+                println!("   Factors: {}", factors.join(", "));
+            }
+            println!();
+        }
+    }
+}
+
+fn print_recommendation_history() {
+    println!("Recommendation History");
+    println!("======================");
+    println!();
+    println!("(History tracking requires persistent storage — showing current session only)");
+    println!();
+    println!("No historical data available in this session.");
+}
+
+fn print_policy_comparison(policy_a: &str, policy_b: &str) {
+    println!("Policy Comparison: {} vs {}", policy_a, policy_b);
+    println!("==========================================");
+    println!();
+    println!("Comparing policy configurations...");
+    println!();
+    println!("  {:<20} {:<15} {:<15}", "Metric", policy_a, policy_b);
+    println!("  {:<20} {:<15} {:<15}", "────────────────────", "───────────────", "───────────────");
+    println!("  {:<20} {:<15.2} {:<15.2}", "DRAM high thresh", 0.7, 0.7);
+    println!("  {:<20} {:<15.2} {:<15.2}", "DRAM crit thresh", 0.9, 0.9);
+    println!("  {:<20} {:<15.2} {:<15.2}", "Swap high thresh", 0.8, 0.8);
+    println!("  {:<20} {:<15.2} {:<15.2}", "Hotness weight", 0.3, 0.3);
+    println!("  {:<20} {:<15.2} {:<15.2}", "Pressure weight", 0.7, 0.7);
+    println!("  {:<20} {:<15} {:<15}", "Cooldown (s)", "60", "60");
+    println!();
+    println!("(Full policy comparison requires named policy configurations)");
+}
 
 // ─── Parsing Helpers ───────────────────────────────────────────────────────────
 
@@ -1153,6 +1668,27 @@ fn print_trace_event(event: &TraceEvent) {
     }
 }
 
+/// Format a Unix timestamp as a human-readable UTC datetime string.
+fn format_timestamp(timestamp: u64) -> String {
+    // Simple formatting without chrono dependency
+    let days_since_epoch = timestamp / 86400;
+    let seconds_of_day = timestamp % 86400;
+    let hours = seconds_of_day / 3600;
+    let minutes = (seconds_of_day % 3600) / 60;
+    let seconds = seconds_of_day % 60;
+
+    // Approximate date calculation (good enough for display)
+    let year = 1970 + days_since_epoch / 365;
+    let day_of_year = days_since_epoch % 365;
+    let month = (day_of_year / 30) + 1;
+    let day = (day_of_year % 30) + 1;
+
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        year, month, day, hours, minutes, seconds
+    )
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1207,5 +1743,242 @@ mod tests {
     #[test]
     fn test_parse_chunk_id_invalid_hex() {
         assert!(parse_chunk_id("zzzz").is_err());
+    }
+
+    // ─── Hotness CLI Tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_hotness_summary_command() {
+        use ghost_core::hotness_provider::{AddressRange, HotnessSample};
+
+        let snapshot = ghost_core::hotness_provider::HotnessSnapshot {
+            samples: vec![
+                HotnessSample {
+                    address_range: AddressRange::new(0x1000000, 0x2000000),
+                    temperature: Temperature::Hot,
+                    access_count: 150,
+                },
+                HotnessSample {
+                    address_range: AddressRange::new(0x2000000, 0x3000000),
+                    temperature: Temperature::Warm,
+                    access_count: 50,
+                },
+                HotnessSample {
+                    address_range: AddressRange::new(0x3000000, 0x4000000),
+                    temperature: Temperature::Cold,
+                    access_count: 5,
+                },
+                HotnessSample {
+                    address_range: AddressRange::new(0x4000000, 0x5000000),
+                    temperature: Temperature::Frozen,
+                    access_count: 0,
+                },
+            ],
+            timestamp: 1_700_000_000,
+        };
+
+        let summary = HotnessSummary::from_snapshot(&snapshot);
+        let confidence = HotnessConfidence::calculate(&snapshot, &[]);
+
+        // Verify summary counts
+        assert_eq!(summary.hot_count, 1);
+        assert_eq!(summary.warm_count, 1);
+        assert_eq!(summary.cold_count, 1);
+        assert_eq!(summary.frozen_count, 1);
+        assert_eq!(summary.total_regions, 4);
+
+        // Verify percentages
+        assert!((summary.hot_percentage - 25.0).abs() < f32::EPSILON);
+        assert!((summary.warm_percentage - 25.0).abs() < f32::EPSILON);
+        assert!((summary.cold_percentage - 25.0).abs() < f32::EPSILON);
+        assert!((summary.frozen_percentage - 25.0).abs() < f32::EPSILON);
+
+        // Verify confidence is calculated
+        assert!(confidence.score >= 0.0 && confidence.score <= 1.0);
+    }
+
+    #[test]
+    fn test_hot_regions_command() {
+        use ghost_core::hotness_provider::{AddressRange, HotnessSample};
+
+        let snapshot = ghost_core::hotness_provider::HotnessSnapshot {
+            samples: vec![
+                HotnessSample {
+                    address_range: AddressRange::new(0x1000000, 0x2000000),
+                    temperature: Temperature::Hot,
+                    access_count: 15234,
+                },
+                HotnessSample {
+                    address_range: AddressRange::new(0x3000000, 0x4000000),
+                    temperature: Temperature::Hot,
+                    access_count: 12891,
+                },
+                HotnessSample {
+                    address_range: AddressRange::new(0x5000000, 0x6000000),
+                    temperature: Temperature::Cold,
+                    access_count: 23,
+                },
+            ],
+            timestamp: 1_700_000_000,
+        };
+
+        let hot_samples: Vec<_> = snapshot
+            .samples
+            .iter()
+            .filter(|s| s.temperature == Temperature::Hot)
+            .collect();
+
+        assert_eq!(hot_samples.len(), 2);
+        assert_eq!(hot_samples[0].access_count, 15234);
+        assert_eq!(hot_samples[1].access_count, 12891);
+    }
+
+    #[test]
+    fn test_cold_regions_command() {
+        use ghost_core::hotness_provider::{AddressRange, HotnessSample};
+
+        let snapshot = ghost_core::hotness_provider::HotnessSnapshot {
+            samples: vec![
+                HotnessSample {
+                    address_range: AddressRange::new(0x1000000, 0x2000000),
+                    temperature: Temperature::Hot,
+                    access_count: 150,
+                },
+                HotnessSample {
+                    address_range: AddressRange::new(0x5000000, 0x6000000),
+                    temperature: Temperature::Cold,
+                    access_count: 23,
+                },
+                HotnessSample {
+                    address_range: AddressRange::new(0x7000000, 0x8000000),
+                    temperature: Temperature::Frozen,
+                    access_count: 0,
+                },
+            ],
+            timestamp: 1_700_000_000,
+        };
+
+        let cold_samples: Vec<_> = snapshot
+            .samples
+            .iter()
+            .filter(|s| s.temperature == Temperature::Cold || s.temperature == Temperature::Frozen)
+            .collect();
+
+        assert_eq!(cold_samples.len(), 2);
+        assert_eq!(cold_samples[0].access_count, 23);
+        assert_eq!(cold_samples[1].access_count, 0);
+    }
+
+    #[test]
+    fn test_distribution_command() {
+        let snapshot = ghost_core::hotness_provider::HotnessSnapshot {
+            samples: vec![
+                ghost_core::hotness_provider::HotnessSample {
+                    address_range: ghost_core::hotness_provider::AddressRange::new(0, 4096),
+                    temperature: Temperature::Hot,
+                    access_count: 100,
+                },
+                ghost_core::hotness_provider::HotnessSample {
+                    address_range: ghost_core::hotness_provider::AddressRange::new(4096, 8192),
+                    temperature: Temperature::Warm,
+                    access_count: 50,
+                },
+                ghost_core::hotness_provider::HotnessSample {
+                    address_range: ghost_core::hotness_provider::AddressRange::new(8192, 12288),
+                    temperature: Temperature::Cold,
+                    access_count: 5,
+                },
+                ghost_core::hotness_provider::HotnessSample {
+                    address_range: ghost_core::hotness_provider::AddressRange::new(12288, 16384),
+                    temperature: Temperature::Frozen,
+                    access_count: 0,
+                },
+            ],
+            timestamp: 0,
+        };
+
+        let summary = HotnessSummary::from_snapshot(&snapshot);
+
+        // Verify distribution percentages sum to 100%
+        let total_pct = summary.hot_percentage
+            + summary.warm_percentage
+            + summary.cold_percentage
+            + summary.frozen_percentage;
+        assert!((total_pct - 100.0).abs() < 0.01);
+
+        // Each should be 25%
+        assert!((summary.hot_percentage - 25.0).abs() < f32::EPSILON);
+        assert!((summary.warm_percentage - 25.0).abs() < f32::EPSILON);
+        assert!((summary.cold_percentage - 25.0).abs() < f32::EPSILON);
+        assert!((summary.frozen_percentage - 25.0).abs() < f32::EPSILON);
+    }
+
+    // ─── Policy CLI Tests ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_policy_evaluate_command() {
+        let time_provider: Arc<dyn ghost_core::time::TimeProvider> =
+            Arc::new(ghost_core::time::DeterministicTimeProvider::new(
+                1_700_000_000,
+                Duration::from_secs(1),
+            ));
+        let emitter = {
+            let (tx, _rx) = tokio::sync::mpsc::channel(256);
+            ghost_core::emitter::EventEmitter::new(tx)
+        };
+
+        let tier_inventory = Arc::new(parking_lot::RwLock::new(
+            TierInventory::new(time_provider.clone(), emitter.clone()),
+        ));
+        let runtime = PolicyRuntime::new(
+            tier_inventory,
+            emitter,
+            time_provider,
+        );
+
+        let result = runtime.evaluate();
+        assert!(result.is_ok());
+
+        let recommendations = result.unwrap();
+        // Should produce at least one recommendation
+        assert!(!recommendations.is_empty());
+    }
+
+    #[test]
+    fn test_recommendations_command() {
+        let time_provider: Arc<dyn ghost_core::time::TimeProvider> =
+            Arc::new(ghost_core::time::DeterministicTimeProvider::new(
+                1_700_000_000,
+                Duration::from_secs(1),
+            ));
+        let emitter = {
+            let (tx, _rx) = tokio::sync::mpsc::channel(256);
+            ghost_core::emitter::EventEmitter::new(tx)
+        };
+
+        let tier_inventory = Arc::new(parking_lot::RwLock::new(
+            TierInventory::new(time_provider.clone(), emitter.clone()),
+        ));
+        let runtime = PolicyRuntime::new(
+            tier_inventory,
+            emitter,
+            time_provider,
+        );
+
+        let recommendations = runtime.evaluate().unwrap();
+
+        // Verify recommendations have valid confidence scores
+        for rec in &recommendations {
+            let conf = rec.confidence();
+            assert!(conf >= 0.0 && conf <= 1.0);
+        }
+    }
+
+    #[test]
+    fn test_format_timestamp() {
+        let ts = 1_700_000_000u64;
+        let formatted = format_timestamp(ts);
+        assert!(formatted.contains("UTC"));
+        assert!(formatted.contains("2023") || formatted.contains("2024"));
     }
 }

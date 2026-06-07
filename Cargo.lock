@@ -454,6 +454,7 @@ dependencies = [
  "ghost-linux",
  "ghost-replay",
  "hex",
+ "parking_lot",
  "serde_json",
  "tempfile",
  "tokio",

@@ -20,6 +20,7 @@ anyhow.workspace = true
 serde_json.workspace = true
 hex.workspace = true
 ghost-replay = { path = "../ghost-replay" }
+parking_lot.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

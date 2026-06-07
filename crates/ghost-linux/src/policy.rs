@@ -316,6 +316,26 @@ impl PolicyRuntime {
         self.hotness_provider = Some(provider);
     }
 
+    /// Get the tier inventory for observation.
+    pub fn tier_inventory(&self) -> &Arc<RwLock<TierInventory>> {
+        &self.tier_inventory
+    }
+
+    /// Get the number of active cooldowns.
+    pub fn active_cooldowns(&self) -> usize {
+        self.cooldown_tracker.active_count()
+    }
+
+    /// Get the number of suppressed recommendations.
+    pub fn suppressed_count(&self) -> usize {
+        self.cooldown_tracker.suppressed_count()
+    }
+
+    /// Get the timestamp of the last evaluation.
+    pub fn last_evaluation_time(&self) -> u64 {
+        self.last_evaluation.load(Ordering::Relaxed)
+    }
+
     /// Check if enough time has passed since the last evaluation (cooldown).
     pub fn is_cooldown_expired(&self) -> bool {
         let now = self.time_provider.timestamp_secs();

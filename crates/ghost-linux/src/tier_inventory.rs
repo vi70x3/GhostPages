@@ -96,6 +96,18 @@ pub struct TierInfo {
 
     /// Last update timestamp (seconds since epoch).
     pub last_updated: u64,
+
+    /// Bytes classified as hot (frequently accessed).
+    pub hot_bytes: u64,
+
+    /// Bytes classified as warm (moderately accessed).
+    pub warm_bytes: u64,
+
+    /// Bytes classified as cold (rarely accessed).
+    pub cold_bytes: u64,
+
+    /// Bytes classified as frozen (essentially never accessed).
+    pub frozen_bytes: u64,
 }
 
 impl TierInfo {
@@ -111,6 +123,10 @@ impl TierInfo {
             pressure: ghost_core::state::PressureState::new(),
             health: ghost_core::events::BackendHealth::Healthy,
             last_updated: 0,
+            hot_bytes: 0,
+            warm_bytes: 0,
+            cold_bytes: 0,
+            frozen_bytes: 0,
         }
     }
 
@@ -454,6 +470,10 @@ impl SimulatedTierInventory {
             },
             health: ghost_core::events::BackendHealth::Healthy,
             last_updated: timestamp,
+            hot_bytes: 0,
+            warm_bytes: 0,
+            cold_bytes: 0,
+            frozen_bytes: 0,
         });
 
         // Add additional tiers based on count
@@ -485,6 +505,10 @@ impl SimulatedTierInventory {
                 pressure: ghost_core::state::PressureState::new(),
                 health: ghost_core::events::BackendHealth::Healthy,
                 last_updated: timestamp,
+                hot_bytes: 0,
+                warm_bytes: 0,
+                cold_bytes: 0,
+                frozen_bytes: 0,
             });
         }
 
@@ -730,6 +754,10 @@ mod tests {
             pressure: ghost_core::state::PressureState::new(),
             health: ghost_core::events::BackendHealth::Healthy,
             last_updated: 1_700_000_000,
+            hot_bytes: 0,
+            warm_bytes: 0,
+            cold_bytes: 0,
+            frozen_bytes: 0,
         };
         metrics::update_tier(&m, &info);
         metrics::update_tier_count(&m, 1);

@@ -24,7 +24,7 @@ use tokio::sync::watch;
 use crate::backpressure::BackpressureController;
 use crate::config::{BackpressureConfig, MigrationConfig, OrchestratorConfig, SchedulerConfig, WorkerPoolConfig};
 use crate::health::HealthTracker;
-use crate::hotness_tracker::HotnessTracker;
+use crate::hotness_tracker::{HotnessState, HotnessTracker};
 use crate::metrics::TransferMetrics;
 use crate::migration::MigrationEngine;
 use crate::pressure::{PressureMonitor, PressureMonitorConfig};
@@ -385,6 +385,18 @@ impl TransferOrchestrator {
                     }
                 }
             });
+        }
+
+        // Spawn the hotness monitoring task if a provider is configured
+        if self.hotness_tracker.has_hotness_provider() {
+            let hotness_monitoring_handle = self.start_hotness_monitoring();
+            tokio::spawn(async move {
+                let _ = hotness_monitoring_handle.await;
+            });
+            tracing::info!(
+                "Hotness monitoring started (interval: {:?})",
+                self.hotness_tracker.sampling_interval()
+            );
         }
 
         // Store the worker handles for shutdown
@@ -941,6 +953,86 @@ impl TransferOrchestrator {
         }
 
         snapshot
+    }
+
+    /// Start hotness monitoring as a background task.
+    ///
+    /// Spawns a periodic task that samples the hotness provider (if configured)
+    /// and emits [] and [] events.
+    ///
+    /// The monitoring interval is controlled by the hotness tracker's
+    /// [](HotnessTracker::sampling_interval).
+    pub fn start_hotness_monitoring(&self) -> tokio::task::JoinHandle<()> {
+        let hotness_tracker = self.hotness_tracker.clone();
+        let event_emitter = self.event_emitter.clone();
+
+        tokio::spawn(async move {
+            let interval = hotness_tracker.sampling_interval();
+            let mut ticker = tokio::time::interval(interval);
+
+            loop {
+                ticker.tick().await;
+
+                // Sample hotness from the provider
+                if let Some(state) = hotness_tracker.sample_hotness() {
+                    let summary = &state.summary;
+
+                    // Emit HotnessSampled event
+                    if let Some(ref emitter) = event_emitter {
+                        let provider_name = hotness_tracker
+                            .hotness_provider()
+                            .map(|p| p.name().to_string())
+                            .unwrap_or_else(|| "none".to_string());
+
+                        let _ = emitter
+                            .hotness_sampled(
+                                provider_name,
+                                summary.total_regions,
+                                summary.hot_count,
+                                summary.cold_count,
+                            )
+                            .await;
+
+                        let _ = emitter
+                            .emit(Event::HotnessSummaryUpdated {
+                                hot: summary.hot_count,
+                                warm: summary.warm_count,
+                                cold: summary.cold_count,
+                                frozen: summary.frozen_count,
+                                sequence_id: 0,
+                            })
+                            .await;
+
+                        let level_str = format!("{}", state.confidence.level());
+                        let _ = emitter
+                            .emit(Event::HotnessConfidenceUpdated {
+                                region: "global".to_string(),
+                                confidence: state.confidence.score,
+                                level: level_str,
+                                sequence_id: 0,
+                            })
+                            .await;
+                    }
+
+                    tracing::debug!(
+                        "Hotness monitoring: {} hot, {} warm, {} cold, {} frozen (confidence: {:.2})",
+                        summary.hot_count,
+                        summary.warm_count,
+                        summary.cold_count,
+                        summary.frozen_count,
+                        state.confidence.score,
+                    );
+                }
+            }
+        })
+    }
+
+    /// Get the current hotness summary from the tracker.
+    ///
+    /// Returns the aggregated [] which includes summary
+    /// statistics, confidence scoring, and trend history.
+    pub fn get_hotness_summary(&self) -> HotnessState {
+        self.hotness_tracker.get_hotness_state()
     }
 
     /// Submit a transfer job to the queue.

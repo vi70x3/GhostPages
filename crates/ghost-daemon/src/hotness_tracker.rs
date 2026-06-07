@@ -6,18 +6,74 @@
 //!
 //! Optionally accepts a [`HotnessProvider`] to integrate external hotness
 //! data (e.g., from DAMON on Linux) with the internal chunk-level tracking.
+//!
+//! The tracker maintains a [`HotnessState`] that aggregates summary statistics,
+//! confidence scoring, and trend history from provider samples.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use ghost_core::hotness::ChunkHotness;
-use ghost_core::hotness_provider::HotnessProvider;
+use ghost_core::hotness_confidence::HotnessConfidence;
+use ghost_core::hotness_history::HotnessHistory;
+use ghost_core::hotness_provider::{HotnessProvider, HotnessSnapshot, Temperature};
+use ghost_core::hotness_summary::HotnessSummary;
 use ghost_core::trace::{current_timestamp, TraceEvent};
 use ghost_core::types::{ChunkId, TierId};
 
 use parking_lot::RwLock;
 
 use crate::trace_log::TraceLog;
+
+/// Aggregated hotness state from provider samples.
+///
+/// Combines summary statistics, confidence scoring, and trend history
+/// into a single snapshot that can be queried by the orchestrator
+/// and emitted as events.
+#[derive(Debug, Clone)]
+pub struct HotnessState {
+    /// Aggregated temperature counts and percentages.
+    pub summary: HotnessSummary,
+    /// Confidence score for the current classification.
+    pub confidence: HotnessConfidence,
+    /// Rolling history of snapshots for trend analysis.
+    pub history: HotnessHistory,
+    /// Timestamp of the last update (seconds since epoch).
+    pub last_update: u64,
+}
+
+impl HotnessState {
+    /// Create an empty hotness state with default values.
+    pub fn empty() -> Self {
+        Self {
+            summary: HotnessSummary::from_snapshot(&HotnessSnapshot {
+                samples: vec![],
+                timestamp: 0,
+            }),
+            confidence: HotnessConfidence::calculate(
+                &HotnessSnapshot {
+                    samples: vec![],
+                    timestamp: 0,
+                },
+                &[],
+            ),
+            history: HotnessHistory::new(64),
+            last_update: 0,
+        }
+    }
+
+    /// Update the state from a new provider snapshot.
+    pub fn update(&mut self, snapshot: HotnessSnapshot) {
+        let now = snapshot.timestamp;
+        let history_snapshots: Vec<HotnessSnapshot> = self.history.snapshots().to_vec();
+
+        self.summary = HotnessSummary::from_snapshot(&snapshot);
+        self.confidence = HotnessConfidence::calculate(&snapshot, &history_snapshots);
+        self.history.push(snapshot);
+        self.last_update = now;
+    }
+}
 
 /// SUBSYSTEM: Runtime State Owner
 ///
@@ -26,6 +82,9 @@ use crate::trace_log::TraceLog;
 /// When a [`HotnessProvider`] is set via [`set_hotness_provider`](HotnessTracker::set_hotness_provider),
 /// the tracker can integrate external hotness observations (e.g., from DAMON)
 /// with its internal chunk-level access tracking.
+///
+/// The tracker maintains a [`HotnessState`] that is updated each time
+/// [`sample_hotness`](HotnessTracker::sample_hotness) is called.
 pub struct HotnessTracker {
     hotness_map: Arc<RwLock<BTreeMap<ChunkId, ChunkHotness>>>,
     trace_log: Arc<TraceLog>,
@@ -33,6 +92,10 @@ pub struct HotnessTracker {
     max_tracked: usize,
     /// Optional external hotness provider.
     hotness_provider: Arc<RwLock<Option<Arc<dyn HotnessProvider>>>>,
+    /// Aggregated hotness state from provider samples.
+    hotness_state: RwLock<HotnessState>,
+    /// Interval between automatic hotness samples.
+    sampling_interval: RwLock<Duration>,
 }
 
 impl HotnessTracker {
@@ -43,6 +106,24 @@ impl HotnessTracker {
             trace_log,
             max_tracked,
             hotness_provider: Arc::new(RwLock::new(None)),
+            hotness_state: RwLock::new(HotnessState::empty()),
+            sampling_interval: RwLock::new(Duration::from_secs(60)),
+        }
+    }
+
+    /// Create a new hotness tracker with a custom sampling interval.
+    pub fn with_sampling_interval(
+        max_tracked: usize,
+        trace_log: Arc<TraceLog>,
+        interval: Duration,
+    ) -> Self {
+        Self {
+            hotness_map: Arc::new(RwLock::new(BTreeMap::new())),
+            trace_log,
+            max_tracked,
+            hotness_provider: Arc::new(RwLock::new(None)),
+            hotness_state: RwLock::new(HotnessState::empty()),
+            sampling_interval: RwLock::new(interval),
         }
     }
 
@@ -65,6 +146,77 @@ impl HotnessTracker {
     /// Check if a hotness provider is configured.
     pub fn has_hotness_provider(&self) -> bool {
         self.hotness_provider.read().is_some()
+    }
+
+    /// Get the current sampling interval.
+    pub fn sampling_interval(&self) -> Duration {
+        *self.sampling_interval.read()
+    }
+
+    /// Set the sampling interval.
+    pub fn set_sampling_interval(&self, interval: Duration) {
+        *self.sampling_interval.write() = interval;
+    }
+
+    /// Sample hotness from the configured provider and update the hotness state.
+    ///
+    /// Returns the updated [`HotnessState`] on success, or `None` if
+    /// no provider is configured or the provider fails.
+    pub fn sample_hotness(&self) -> Option<HotnessState> {
+        let provider = self.hotness_provider.read().clone()?;
+        let snapshot = provider.sample().ok()?;
+        let mut state = self.hotness_state.write();
+        state.update(snapshot);
+        Some(state.clone())
+    }
+
+    /// Get the current hotness state.
+    pub fn get_hotness_state(&self) -> HotnessState {
+        self.hotness_state.read().clone()
+    }
+
+    /// Get regions classified as hot or warm (active regions).
+    ///
+    /// Returns samples from the most recent snapshot in history
+    /// that have temperature Hot or Warm.
+    pub fn get_hot_regions(&self) -> Vec<(String, Temperature)> {
+        let state = self.hotness_state.read();
+        let mut regions = Vec::new();
+
+        if let Some(latest) = state.history.snapshots().last() {
+            for sample in &latest.samples {
+                if sample.temperature.is_active() {
+                    regions.push((
+                        format!("{:x}-{:x}", sample.address_range.start, sample.address_range.end),
+                        sample.temperature,
+                    ));
+                }
+            }
+        }
+
+        regions
+    }
+
+    /// Get regions classified as cold or frozen (inactive regions).
+    ///
+    /// Returns samples from the most recent snapshot in history
+    /// that have temperature Cold or Frozen.
+    pub fn get_cold_regions(&self) -> Vec<(String, Temperature)> {
+        let state = self.hotness_state.read();
+        let mut regions = Vec::new();
+
+        if let Some(latest) = state.history.snapshots().last() {
+            for sample in &latest.samples {
+                if sample.temperature.is_inactive() {
+                    regions.push((
+                        format!("{:x}-{:x}", sample.address_range.start, sample.address_range.end),
+                        sample.temperature,
+                    ));
+                }
+            }
+        }
+
+        regions
     }
 
     /// Record an access to a chunk.
@@ -217,7 +369,7 @@ mod tests {
         let id = test_chunk_id(1);
 
         // Access many times to make it hot
-        for i in 0..20 {
+        for _ in 0..20 {
             tracker.record_access(id, 1024);
         }
 
@@ -230,21 +382,12 @@ mod tests {
         let tracker = HotnessTracker::new(1000, test_trace_log());
         let id = test_chunk_id(1);
 
-        // Single access with old timestamp = cold (recency decays)
-        let now = current_timestamp();
+        // Single access — score ~0.456, not < 0.2
         tracker.record_access(id, 1024);
-        // Manually decay by recording with a much later timestamp
-        // Since we can't directly set time, we use the hotness tracker's
-        // decay mechanism: record at time, then the score is based on recency
-        // Actually, a single access has high recency (1.0), so it won't be cold.
-        // Instead, verify that find_cold_chunks returns empty for a single access
-        // (which is correct behavior - a single recent access is not "cold")
         let cold = tracker.find_cold_chunks(0.2);
-        // Score after single access: ~0.456 (not < 0.2), so should be empty
         assert!(cold.is_empty());
 
-        // But if we use a very low threshold, it should still not be cold
-        // because the score is ~0.456
+        // Score ~0.456 < 0.5, so should be found
         let warm = tracker.find_cold_chunks(0.5);
         assert!(!warm.is_empty());
     }
@@ -334,5 +477,49 @@ mod tests {
         // Setting None should be a no-op
         tracker.set_hotness_provider(None);
         assert!(!tracker.has_hotness_provider());
+    }
+
+    #[test]
+    fn test_hotness_state_empty() {
+        let state = HotnessState::empty();
+        assert_eq!(state.summary.total_regions, 0);
+        assert_eq!(state.last_update, 0);
+        assert!(state.history.is_empty());
+    }
+
+    #[test]
+    fn test_hotness_tracker_sampling_interval() {
+        let tracker = HotnessTracker::new(1000, test_trace_log());
+        assert_eq!(tracker.sampling_interval(), Duration::from_secs(60));
+
+        let custom = HotnessTracker::with_sampling_interval(
+            1000,
+            test_trace_log(),
+            Duration::from_secs(30),
+        );
+        assert_eq!(custom.sampling_interval(), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_hotness_tracker_get_hotness_state() {
+        let tracker = HotnessTracker::new(1000, test_trace_log());
+        let state = tracker.get_hotness_state();
+        // Without a provider, state should be empty
+        assert_eq!(state.summary.total_regions, 0);
+        assert_eq!(state.last_update, 0);
+    }
+
+    #[test]
+    fn test_hotness_tracker_get_hot_regions_empty() {
+        let tracker = HotnessTracker::new(1000, test_trace_log());
+        let hot = tracker.get_hot_regions();
+        assert!(hot.is_empty());
+    }
+
+    #[test]
+    fn test_hotness_tracker_get_cold_regions_empty() {
+        let tracker = HotnessTracker::new(1000, test_trace_log());
+        let cold = tracker.get_cold_regions();
+        assert!(cold.is_empty());
     }
 }

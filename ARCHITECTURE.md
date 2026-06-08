@@ -170,6 +170,68 @@ Signals → State → Recommendations → Evaluation → Policy Learning
 
 The `ghost-evaluator` crate completes the bridge from "Signals → State → Recommendations" to the full pipeline. It enables GhostPages to **evaluate whether its recommendations are actually useful** before implementing real migration — a critical safety property for a production memory management system.
 
+## Benchmarking & Regression Testing (Phase 4.6)
+
+The `ghost-bench` crate provides **synthetic workload definitions**, **policy comparison runs**, **benchmark reports**, **policy experiments**, and a **persistent leaderboard** — all fully deterministic and pure (no I/O, no mutation). It proves that GhostPages policies measurably outperform baseline Linux behavior on real workload patterns.
+
+### Design Principle: Deterministic Benchmarking
+
+All workload generation is **pure/deterministic** — same seed + same definition = identical scenario. This enables reproducible benchmarks and trustworthy regression detection. A future change that causes `HybridPolicy` to no longer outperform `LinuxBaseline` will be caught by the test suite.
+
+### Modules
+
+| Module | Purpose |
+|--------|---------|
+| `workload` | 7 built-in synthetic workload definitions (idle_desktop, memory_pressure_ramp, build_server, database_cache, mixed_multitask, allocator_stress, tier_saturation) with deterministic generation |
+| `runner` | `BenchmarkRunner` orchestrating workload generation, policy evaluation, and report production |
+| `comparison` | `run_policy_comparison` and `run_workload_comparison` for head-to-head policy scoring |
+| `report` | `BenchmarkReport` with markdown and JSON output formats, policy ranking, and summary statistics |
+| `experiment` | Parameter sweep experiments (pressure_weight, hybrid_weight, temperature_threshold) for discovering optimal scoring configurations |
+| `leaderboard` | `PolicyLeaderboard` tracking policy performance over time with per-workload-class rankings |
+
+### Built-in Workloads
+
+| Workload | Class | Key Characteristic |
+|----------|-------|--------------------|
+| `idle_desktop` | Desktop | Low pressure, occasional brief spikes |
+| `memory_pressure_ramp` | MemoryPressure | Gradually increasing pressure from idle to critical |
+| `build_server` | BuildSystem | Periodic high-pressure compilation bursts |
+| `database_cache` | DataSystem | Moderate sustained pressure with hotness data |
+| `mixed_multitask` | Mixed | Alternating patterns: idle → browser → build → cache → recovery |
+| `allocator_stress` | MemoryPressure | Rapid oscillation between allocate and free |
+| `tier_saturation` | MemoryPressure | Tier-by-tier saturation: DRAM → ZRAM → swap → recovery |
+
+### Regression Test Suite
+
+The integration test suite (`ghost-bench/tests/integration.rs`) contains 25 tests across 6 categories:
+
+1. **Determinism** — same seed produces identical results
+2. **Policy Ranking** — HybridPolicy outperforms LinuxBaseline, baseline rarely wins
+3. **Workload Characteristics** — each workload exhibits expected pressure patterns
+4. **Report Generation** — all 7 workloads present, rankings populated, valid JSON/markdown
+5. **Leaderboard** — entries created, sorted by score, filterable by workload class
+6. **Experiments** — results produced, best value identified, improvement measured
+
+### CLI Integration
+
+Benchmark commands are accessible through `ghost-cli`:
+
+- `bench run` — run all built-in workload benchmarks and display the report
+- `bench workload <name>` — run a specific workload benchmark with detailed per-policy results
+- `bench report` — show the last benchmark report in markdown or JSON format
+- `bench experiment <name>` — run a parameter sweep experiment (pressure_weight, hybrid_weight, temperature_threshold)
+- `bench leaderboard` — display the policy leaderboard from the last benchmark run
+
+### Strategic Goal
+
+GhostPages' benchmarking pipeline provides **continuous quality assurance**:
+
+```
+Synthetic Workloads → Policy Evaluation → Reports → Regression Detection
+```
+
+The `ghost-bench` crate enables GhostPages to **prove its policies are measurably better** than baseline Linux behavior — not just in theory, but in a deterministic, repeatable, automated fashion. This is the foundation for Phase 5's real-world workload validation.
+
 ## State Ownership
 
 Only `ghost-daemon` may mutate runtime state. This is the highest-priority architectural contract, enforced continuously through both compile-time and runtime mechanisms.

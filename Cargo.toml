@@ -16,6 +16,7 @@ members = [
     "crates/ghost-replay",
     "crates/ghost-cli",
     "crates/ghost-evaluator",
+    "crates/ghost-bench",
 ]
 
 exclude = ["fuzz"]

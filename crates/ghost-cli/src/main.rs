@@ -212,7 +212,50 @@ enum Commands {
     /// Evaluator commands for recommendation scoring and policy comparison.
     #[command(subcommand)]
     Evaluator(EvaluatorCommands),
+
+
+    /// Benchmark commands for workload evaluation and policy comparison.
+    #[command(subcommand)]
+    Bench(BenchCommands),
 }
+
+/// Benchmark subcommands.
+#[derive(Debug, Subcommand)]
+enum BenchCommands {
+    /// Run all built-in workload benchmarks.
+    Run {
+        /// Random seed for deterministic generation.
+        #[arg(long, default_value = "42")]
+        seed: u64,
+    },
+
+    /// Run a specific workload benchmark.
+    Workload {
+        /// Workload name (idle_desktop, memory_pressure_ramp, build_server, etc.).
+        name: String,
+        /// Random seed for deterministic generation.
+        #[arg(long, default_value = "42")]
+        seed: u64,
+    },
+
+    /// Show the last benchmark report in markdown format.
+    Report {
+        /// Output format (markdown, json).
+        #[arg(long, default_value = "markdown")]
+        format: String,
+    },
+
+    /// Run a parameter sweep experiment.
+    Experiment {
+        /// Experiment name (pressure_weight, hybrid_weight, temperature_threshold).
+        name: String,
+    },
+
+    /// Show the policy leaderboard from the last benchmark run.
+    Leaderboard,
+}
+
+
 
 /// Linux observation subcommands.
 #[derive(Debug, Subcommand)]
@@ -1390,6 +1433,174 @@ async fn main() -> Result<()> {
                     println!("Entries: {}", window_size);
                     println!();
                     print_stability(&stability);
+                }
+            }
+        }
+
+        // ─── Benchmark Commands ────────────────────────────────────────────────────
+
+        Commands::Bench(ref bench_cmd) => {
+            use ghost_bench::{
+                all_builtin_workloads, leaderboard::from_report,
+                report::format_report_markdown, report::format_report_json,
+                runner::BenchmarkRunner, workload::WorkloadGenerator,
+            };
+            use ghost_evaluator::tournament::{
+                ArenaLinuxBaselinePolicy, HotnessPolicy, HybridPolicy, PressurePolicy,
+            };
+
+            // Build a runner with all built-in policies
+            let mut runner = BenchmarkRunner::new(42);
+            runner.with_policies(vec![
+                Box::new(ArenaLinuxBaselinePolicy),
+                Box::new(PressurePolicy),
+                Box::new(HotnessPolicy),
+                Box::new(HybridPolicy),
+            ]);
+
+            match bench_cmd {
+                BenchCommands::Run { seed } => {
+                    let mut seeded_runner = BenchmarkRunner::new(*seed);
+                    seeded_runner.with_policies(vec![
+                        Box::new(ArenaLinuxBaselinePolicy),
+                        Box::new(PressurePolicy),
+                        Box::new(HotnessPolicy),
+                        Box::new(HybridPolicy),
+                    ]);
+                    let report = seeded_runner.run_all_builtin();
+                    let md = format_report_markdown(&report);
+                    println!("{}", md);
+                }
+
+                BenchCommands::Workload { name, seed } => {
+                    let gen = WorkloadGenerator::new(*seed);
+                    let definitions = all_builtin_workloads();
+                    let def = definitions.iter().find(|d| d.name == *name);
+
+                    match def {
+                        Some(def) => {
+                            let scenario = gen.generate(def);
+                            let policies: Vec<Box<dyn ghost_evaluator::tournament::Policy>> = vec![
+                                Box::new(ArenaLinuxBaselinePolicy),
+                                Box::new(PressurePolicy),
+                                Box::new(HotnessPolicy),
+                                Box::new(HybridPolicy),
+                            ];
+                            let weights = ghost_evaluator::scoring::ScoringWeights::default();
+                            let comparison =
+                                ghost_bench::comparison::run_workload_comparison(&scenario, &policies, &weights);
+
+                            println!("=== Benchmark: {} ===", name);
+                            println!("Class: {}", def.class);
+                            println!("Description: {}", def.description);
+                            println!("Snapshots: {}", scenario.snapshots.len());
+                            println!("Peak DRAM pressure: {:.2}", scenario.metadata.peak_dram_pressure);
+                            println!("Peak DRAM utilization: {:.1}%", scenario.metadata.peak_dram_utilization * 100.0);
+                            println!();
+                            println!("{:<16} {:<12} {:<12} {:<10}", "Policy", "Score", "Recs", "Active");
+                            println!("{:<16} {:<12} {:<12} {:<10}", "────────────────", "────────────", "────────────", "──────────");
+                            for run in &comparison.runs {
+                                println!(
+                                    "{:<16} {:<12.4} {:<12} {:<10}",
+                                    run.policy_name,
+                                    run.average_score.overall_score,
+                                    run.recommendation_count,
+                                    run.active_recommendation_count
+                                );
+                            }
+                            println!();
+                            println!("★ Winner: {} ({:.4})", comparison.winner, comparison.winner_score);
+                        }
+                        None => {
+                            eprintln!("Unknown workload: '{}'", name);
+                            eprintln!("Available workloads:");
+                            for d in &definitions {
+                                eprintln!("  {} — {}", d.name, d.description);
+                            }
+                            std::process::exit(1);
+                        }
+                    }
+                }
+
+                BenchCommands::Report { format } => {
+                    let report = runner.run_all_builtin();
+                    match format.as_str() {
+                        "json" => {
+                            let json = format_report_json(&report);
+                            println!("{}", json);
+                        }
+                        _ => {
+                            let md = format_report_markdown(&report);
+                            println!("{}", md);
+                        }
+                    }
+                }
+
+                BenchCommands::Experiment { name } => {
+                    use ghost_bench::experiment::{pressure_weight_experiment, hybrid_weight_experiment, temperature_threshold_experiment, run_experiment};
+
+                    let base_policy = PressurePolicy;
+                    let experiment = match name.as_str() {
+                        "pressure_weight" => pressure_weight_experiment(),
+                        "hybrid_weight" => hybrid_weight_experiment(),
+                        "temperature_threshold" => temperature_threshold_experiment(),
+                        other => {
+                            eprintln!("Unknown experiment: '{}'", other);
+                            eprintln!("Available: pressure_weight, hybrid_weight, temperature_threshold");
+                            std::process::exit(1);
+                        }
+                    };
+
+                    let definitions = all_builtin_workloads();
+                    let scenarios: Vec<_> = definitions.iter().map(|def| {
+                        let gen = WorkloadGenerator::new(def.seed);
+                        gen.generate(def)
+                    }).collect();
+
+                    let result = run_experiment(&experiment, &scenarios, &base_policy);
+
+                    println!("=== Experiment: {} ===", result.name);
+                    println!("Description: {}", result.description);
+                    println!("Parameter: {}", result.parameter_name);
+                    println!("Baseline value: {}", result.baseline_value);
+                    println!("Best value: {}", result.best_value);
+                    println!("Best score: {:.4}", result.best_score);
+                    println!("Improvement: {:.1}%", result.improvement * 100.0);
+                    println!();
+                    println!("{:<12} {:<12} {:<12} {:<12}", "Value", "Avg Score", "Win Rate", "Stability");
+                    println!("{:<12} {:<12} {:<12} {:<12}", "────────────", "────────────", "────────────", "────────────");
+                    for r in &result.results {
+                        println!(
+                            "{:<12.2} {:<12.4} {:<12.1} {:<12.4}",
+                            r.parameter_value,
+                            r.average_score,
+                            r.win_rate * 100.0,
+                            r.stability_index
+                        );
+                    }
+                }
+
+                BenchCommands::Leaderboard => {
+                    let report = runner.run_all_builtin();
+                    let leaderboard = from_report(&report, 1);
+
+                    println!("=== Policy Leaderboard ===");
+                    println!("Version: {}", leaderboard.version);
+                    println!("Last updated: {}", leaderboard.last_updated);
+                    println!();
+
+                    let top = leaderboard.top_policies(10);
+                    println!("{:<6} {:<16} {:<12} {:<12}", "Rank", "Policy", "Score", "Stability");
+                    println!("{:<6} {:<16} {:<12} {:<12}", "──────", "────────────────", "────────────", "────────────");
+                    for (i, entry) in top.iter().enumerate() {
+                        println!(
+                            "{:<6} {:<16} {:<12.4} {:<12.4}",
+                            i + 1,
+                            entry.policy_name,
+                            entry.score,
+                            entry.stability_index
+                        );
+                    }
                 }
             }
         }

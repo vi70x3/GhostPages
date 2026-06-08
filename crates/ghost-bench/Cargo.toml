@@ -1,0 +1,23 @@
+[package]
+name = "ghost-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Benchmarking and workload validation for GhostPages policy evaluation"
+
+[dependencies]
+ghost-core = { path = "../ghost-core" }
+ghost-linux = { path = "../ghost-linux" }
+ghost-evaluator = { path = "../ghost-evaluator" }
+ghost-replay = { path = "../ghost-replay" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = "0.4"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

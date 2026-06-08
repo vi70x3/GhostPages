@@ -10,7 +10,9 @@
 pub mod adaptive;
 pub mod baseline;
 pub mod evaluator_metrics;
+pub mod explanation;
 pub mod lifecycle;
+pub mod quality;
 pub mod replay_analytics;
 pub mod scoring;
 pub mod stability;
@@ -21,8 +23,17 @@ pub use baseline::{
     BaselineAction, BaselineRecommendation, LinuxBaselinePolicy, evaluate_baseline,
 };
 pub use evaluator_metrics::EvaluatorMetrics;
+pub use explanation::{
+    AlternativeAction, ConfidenceExplanation, ConfidenceLevel, ExplanationFactor,
+    ReasonCategory, RecommendationExplanation, explain_recommendation, explain_recommendations,
+    format_explanation,
+};
 pub use lifecycle::{
     LifecycleSummary, LifecycleTracker, RegionLifecycle, TemperatureTransition,
+};
+pub use quality::{
+    QualityDimension, QualityWeights, RecommendationQuality, compute_quality_dimension,
+    compute_recommendation_quality,
 };
 pub use replay_analytics::{
     AnalysisSummary, PolicyDisagreement, PressureProfile, RecommendationEffectiveness,
